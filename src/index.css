@@ -113,4 +113,8 @@
   .glow-green {
     box-shadow: var(--shadow-glow);
   }
+
+  .hero-text-shadow {
+    text-shadow: 0 2px 16px hsl(0 0% 0% / 0.6), 0 1px 4px hsl(0 0% 0% / 0.4);
+  }
 }
