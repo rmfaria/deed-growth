@@ -58,7 +58,7 @@ const LpReservaPiedade = () => {
           </div>
           <div className="container mx-auto px-6 relative z-10 py-24">
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-16 items-center">
-              <motion.div className="hero-text-shadow" initial={{ opacity: 0, y: 30 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.8 }}>
+              <motion.div initial={{ opacity: 0, y: 30 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.8 }}>
                 <h1 className="font-display text-4xl md:text-5xl lg:text-6xl font-bold text-gradient mb-6 leading-tight uppercase">
                   A liberdade do campo e o conforto do seu novo lar.
                 </h1>

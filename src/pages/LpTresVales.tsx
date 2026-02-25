@@ -35,7 +35,6 @@ const LpTresVales = () => {
           <div className="container mx-auto px-6 relative z-10 py-24">
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-16 items-center">
               <motion.div
-                className="hero-text-shadow"
                 initial={{ opacity: 0, y: 30 }}
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ duration: 0.8 }}
