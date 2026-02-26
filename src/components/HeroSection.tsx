@@ -45,7 +45,7 @@ const HeroSection = () => {
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.6, delay: 0.3 }}
-              className="font-body text-lg text-muted-foreground max-w-xl mb-10 leading-relaxed"
+              className="font-body text-lg text-white max-w-xl mb-10 leading-relaxed"
             >
               Somos a agência especializada em <strong className="text-foreground">loteamentos, condomínios e construtoras</strong>. 
               Landing pages de alta conversão, inteligência de marketing e leads qualificados para vender mais rápido.
