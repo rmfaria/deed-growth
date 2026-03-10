@@ -40,6 +40,7 @@ const App = () => (
             <Route path="/lp/tres-vales" element={<LpTresVales />} />
             <Route path="/lp/reserva-de-piedade" element={<LpReservaPiedade />} />
             <Route path="/politica-de-privacidade" element={<PoliticaPrivacidade />} />
+            <Route path="/proposta" element={<Proposta />} />
 
             {/* CRM Login */}
             <Route path="/crm/login" element={<CrmLogin />} />
