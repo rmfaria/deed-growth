@@ -46,6 +46,7 @@ const timeline = [
 
 const Proposta = () => {
   const navigate = useNavigate();
+  const contentRef = useRef<HTMLDivElement>(null);
   const today = new Date();
   const validUntil = new Date(today);
   validUntil.setDate(validUntil.getDate() + 15);
