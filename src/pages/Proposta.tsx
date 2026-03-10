@@ -1,8 +1,9 @@
-import { Check, ArrowLeft, FileText, Clock, Zap, Database, MessageSquare, BarChart3, Share2 } from "lucide-react";
+import { Check, ArrowLeft, FileText, Clock, Zap, Database, MessageSquare, BarChart3, Share2, Download } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
 import { useNavigate } from "react-router-dom";
+import { useRef, useCallback } from "react";
 
 const deliverables = [
   {
@@ -45,6 +46,7 @@ const timeline = [
 
 const Proposta = () => {
   const navigate = useNavigate();
+  const contentRef = useRef<HTMLDivElement>(null);
   const today = new Date();
   const validUntil = new Date(today);
   validUntil.setDate(validUntil.getDate() + 15);
@@ -52,19 +54,40 @@ const Proposta = () => {
   const formatDate = (date: Date) =>
     date.toLocaleDateString("pt-BR", { day: "2-digit", month: "long", year: "numeric" });
 
+  const handleDownloadPDF = useCallback(async () => {
+    if (!contentRef.current) return;
+    const html2pdf = (await import("html2pdf.js")).default;
+    const opt = {
+      margin: [10, 0, 10, 0],
+      filename: `Proposta_UrbaMarket_${today.toISOString().slice(0, 10)}.pdf`,
+      image: { type: "jpeg", quality: 0.98 },
+      html2canvas: { scale: 2, useCORS: true },
+      jsPDF: { unit: "mm", format: "a4", orientation: "portrait" },
+      pagebreak: { mode: ["avoid-all", "css", "legacy"] },
+    };
+    html2pdf().set(opt).from(contentRef.current).save();
+  }, [today]);
+
   return (
     <div className="min-h-screen bg-background text-foreground">
       {/* Header */}
-      <header className="border-b border-border bg-card/60 backdrop-blur-md sticky top-0 z-50">
+      <header className="border-b border-border bg-card/60 backdrop-blur-md sticky top-0 z-50 print:hidden">
         <div className="max-w-4xl mx-auto px-6 py-4 flex items-center justify-between">
           <button onClick={() => navigate("/")} className="flex items-center gap-2 text-muted-foreground hover:text-foreground transition-colors">
             <ArrowLeft size={18} />
             <span className="font-body text-sm">Voltar ao site</span>
           </button>
-          <span className="font-display text-lg font-bold text-primary">UrbaMarket</span>
+          <div className="flex items-center gap-4">
+            <Button onClick={handleDownloadPDF} variant="outline" size="sm" className="gap-2 font-display">
+              <Download size={16} />
+              Baixar PDF
+            </Button>
+            <span className="font-display text-lg font-bold text-primary">UrbaMarket</span>
+          </div>
         </div>
       </header>
 
+      <div ref={contentRef}>
       <main className="max-w-4xl mx-auto px-6 py-12 space-y-16">
         {/* Title Block */}
         <section className="space-y-4">
@@ -230,6 +253,7 @@ const Proposta = () => {
           <p className="text-sm text-muted-foreground font-body mt-1">Consultoria de Marketing & Vendas para o Mercado Imobiliário</p>
         </div>
       </footer>
+      </div>
     </div>
   );
 };
