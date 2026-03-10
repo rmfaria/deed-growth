@@ -254,6 +254,7 @@ const Proposta = () => {
         </div>
       </footer>
       </div>
+    </div>
   );
 };
 
