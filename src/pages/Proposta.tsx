@@ -253,7 +253,7 @@ const Proposta = () => {
           <p className="text-sm text-muted-foreground font-body mt-1">Consultoria de Marketing & Vendas para o Mercado Imobiliário</p>
         </div>
       </footer>
-    </div>
+      </div>
   );
 };
 
