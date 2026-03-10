@@ -71,16 +71,23 @@ const Proposta = () => {
   return (
     <div className="min-h-screen bg-background text-foreground">
       {/* Header */}
-      <header className="border-b border-border bg-card/60 backdrop-blur-md sticky top-0 z-50">
+      <header className="border-b border-border bg-card/60 backdrop-blur-md sticky top-0 z-50 print:hidden">
         <div className="max-w-4xl mx-auto px-6 py-4 flex items-center justify-between">
           <button onClick={() => navigate("/")} className="flex items-center gap-2 text-muted-foreground hover:text-foreground transition-colors">
             <ArrowLeft size={18} />
             <span className="font-body text-sm">Voltar ao site</span>
           </button>
-          <span className="font-display text-lg font-bold text-primary">UrbaMarket</span>
+          <div className="flex items-center gap-4">
+            <Button onClick={handleDownloadPDF} variant="outline" size="sm" className="gap-2 font-display">
+              <Download size={16} />
+              Baixar PDF
+            </Button>
+            <span className="font-display text-lg font-bold text-primary">UrbaMarket</span>
+          </div>
         </div>
       </header>
 
+      <div ref={contentRef}>
       <main className="max-w-4xl mx-auto px-6 py-12 space-y-16">
         {/* Title Block */}
         <section className="space-y-4">
