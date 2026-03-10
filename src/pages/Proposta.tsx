@@ -55,34 +55,49 @@ const Proposta = () => {
     date.toLocaleDateString("pt-BR", { day: "2-digit", month: "long", year: "numeric" });
 
   const handleDownloadPDF = useCallback(async () => {
-    if (!contentRef.current) return;
+    const contentElement = contentRef.current;
+    if (!contentElement) return;
+
     const html2canvas = (await import("html2canvas")).default;
     const { jsPDF } = await import("jspdf");
 
-    const canvas = await html2canvas(contentRef.current, {
-      scale: 2,
-      useCORS: true,
-      backgroundColor: "#101318",
-      logging: false,
-    });
+    const A4_WIDTH_MM = 210;
+    const A4_HEIGHT_MM = 297;
+    const MARGIN_MM = 12;
+    const CONTENT_WIDTH_MM = A4_WIDTH_MM - MARGIN_MM * 2;
+    const SECTION_GAP_MM = 4;
 
-    const imgWidth = 210;
-    const pageHeight = 297;
-    const imgHeight = (canvas.height * imgWidth) / canvas.width;
-    const pdf = new jsPDF("p", "mm", "a4");
-    const imgData = canvas.toDataURL("image/png");
+    const rootStyles = getComputedStyle(document.documentElement);
+    const backgroundToken = rootStyles.getPropertyValue("--background").trim();
+    const backgroundColor = backgroundToken ? `hsl(${backgroundToken})` : "#101318";
 
-    let heightLeft = imgHeight;
-    let position = 0;
+    const pdf = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
+    let currentY = MARGIN_MM;
 
-    pdf.addImage(imgData, "PNG", 0, position, imgWidth, imgHeight);
-    heightLeft -= pageHeight;
+    const mainSections = Array.from(contentElement.querySelectorAll("main > section")) as HTMLElement[];
+    const footerSection = contentElement.querySelector("footer") as HTMLElement | null;
+    const sections = footerSection ? [...mainSections, footerSection] : mainSections;
 
-    while (heightLeft > 0) {
-      position = heightLeft - imgHeight;
-      pdf.addPage();
-      pdf.addImage(imgData, "PNG", 0, position, imgWidth, imgHeight);
-      heightLeft -= pageHeight;
+    for (const section of sections) {
+      const canvas = await html2canvas(section, {
+        scale: 2,
+        useCORS: true,
+        backgroundColor,
+        logging: false,
+      });
+
+      const sectionHeightMM = (canvas.height * CONTENT_WIDTH_MM) / canvas.width;
+      const remainingSpace = A4_HEIGHT_MM - MARGIN_MM - currentY;
+
+      if (sectionHeightMM > remainingSpace && currentY > MARGIN_MM) {
+        pdf.addPage();
+        currentY = MARGIN_MM;
+      }
+
+      const imgData = canvas.toDataURL("image/png");
+      pdf.addImage(imgData, "PNG", MARGIN_MM, currentY, CONTENT_WIDTH_MM, sectionHeightMM);
+
+      currentY += sectionHeightMM + SECTION_GAP_MM;
     }
 
     pdf.save(`Proposta_UrbaMarket_${today.toISOString().slice(0, 10)}.pdf`);
