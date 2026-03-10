@@ -10,6 +10,7 @@ import Contato from "./pages/Contato";
 import LpTresVales from "./pages/LpTresVales";
 import LpReservaPiedade from "./pages/LpReservaPiedade";
 import PoliticaPrivacidade from "./pages/PoliticaPrivacidade";
+import Proposta from "./pages/Proposta";
 import NotFound from "./pages/NotFound";
 import CrmLogin from "./pages/CrmLogin";
 import CrmDashboard from "./pages/crm/CrmDashboard";
@@ -39,6 +40,7 @@ const App = () => (
             <Route path="/lp/tres-vales" element={<LpTresVales />} />
             <Route path="/lp/reserva-de-piedade" element={<LpReservaPiedade />} />
             <Route path="/politica-de-privacidade" element={<PoliticaPrivacidade />} />
+            <Route path="/proposta" element={<Proposta />} />
 
             {/* CRM Login */}
             <Route path="/crm/login" element={<CrmLogin />} />
