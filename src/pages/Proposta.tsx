@@ -54,6 +54,20 @@ const Proposta = () => {
   const formatDate = (date: Date) =>
     date.toLocaleDateString("pt-BR", { day: "2-digit", month: "long", year: "numeric" });
 
+  const handleDownloadPDF = useCallback(async () => {
+    if (!contentRef.current) return;
+    const html2pdf = (await import("html2pdf.js")).default;
+    const opt = {
+      margin: [10, 0, 10, 0],
+      filename: `Proposta_UrbaMarket_${today.toISOString().slice(0, 10)}.pdf`,
+      image: { type: "jpeg", quality: 0.98 },
+      html2canvas: { scale: 2, useCORS: true },
+      jsPDF: { unit: "mm", format: "a4", orientation: "portrait" },
+      pagebreak: { mode: ["avoid-all", "css", "legacy"] },
+    };
+    html2pdf().set(opt).from(contentRef.current).save();
+  }, [today]);
+
   return (
     <div className="min-h-screen bg-background text-foreground">
       {/* Header */}
