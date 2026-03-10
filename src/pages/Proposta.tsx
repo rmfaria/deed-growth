@@ -1,8 +1,9 @@
-import { Check, ArrowLeft, FileText, Clock, Zap, Database, MessageSquare, BarChart3, Share2 } from "lucide-react";
+import { Check, ArrowLeft, FileText, Clock, Zap, Database, MessageSquare, BarChart3, Share2, Download } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
 import { useNavigate } from "react-router-dom";
+import { useRef, useCallback } from "react";
 
 const deliverables = [
   {
