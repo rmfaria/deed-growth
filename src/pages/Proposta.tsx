@@ -56,16 +56,36 @@ const Proposta = () => {
 
   const handleDownloadPDF = useCallback(async () => {
     if (!contentRef.current) return;
-    const html2pdf = (await import("html2pdf.js")).default;
-    const opt = {
-      margin: [10, 0, 10, 0],
-      filename: `Proposta_UrbaMarket_${today.toISOString().slice(0, 10)}.pdf`,
-      image: { type: "jpeg", quality: 0.98 },
-      html2canvas: { scale: 2, useCORS: true },
-      jsPDF: { unit: "mm", format: "a4", orientation: "portrait" },
-      pagebreak: { mode: ["avoid-all", "css", "legacy"] },
-    };
-    html2pdf().set(opt).from(contentRef.current).save();
+    const html2canvas = (await import("html2canvas")).default;
+    const { jsPDF } = await import("jspdf");
+
+    const canvas = await html2canvas(contentRef.current, {
+      scale: 2,
+      useCORS: true,
+      backgroundColor: "#101318",
+      logging: false,
+    });
+
+    const imgWidth = 210;
+    const pageHeight = 297;
+    const imgHeight = (canvas.height * imgWidth) / canvas.width;
+    const pdf = new jsPDF("p", "mm", "a4");
+    const imgData = canvas.toDataURL("image/png");
+
+    let heightLeft = imgHeight;
+    let position = 0;
+
+    pdf.addImage(imgData, "PNG", 0, position, imgWidth, imgHeight);
+    heightLeft -= pageHeight;
+
+    while (heightLeft > 0) {
+      position = heightLeft - imgHeight;
+      pdf.addPage();
+      pdf.addImage(imgData, "PNG", 0, position, imgWidth, imgHeight);
+      heightLeft -= pageHeight;
+    }
+
+    pdf.save(`Proposta_UrbaMarket_${today.toISOString().slice(0, 10)}.pdf`);
   }, [today]);
 
   return (
