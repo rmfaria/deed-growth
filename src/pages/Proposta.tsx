@@ -73,6 +73,7 @@ const Proposta = () => {
             Desenvolvimento de Plataforma Digital com CRM Integrado
           </h1>
           <div className="flex flex-wrap gap-x-8 gap-y-2 text-sm text-muted-foreground font-body pt-2">
+            <span>Para: <strong className="text-foreground">UrbaMarket</strong></span>
             <span>Emitido em: <strong className="text-foreground">{formatDate(today)}</strong></span>
             <span>Válido até: <strong className="text-foreground">{formatDate(validUntil)}</strong></span>
           </div>
