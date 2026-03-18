@@ -160,6 +160,7 @@ const STATE_TRANSITIONS = {
   APRESENTACAO_EMPREENDIMENTO: "CONDICOES_COMERCIAIS",
   CONDICOES_COMERCIAIS: "CONVERSAO",
   CONVERSAO: "CONVERSAO", // stays until action
+  POS_CONVERSAO: "POS_CONVERSAO", // after materials sent
 };
 
 function getBotMessages() {
@@ -190,7 +191,9 @@ const BOT_MESSAGES_STATIC = {
   CONDICOES_COMERCIAIS:
     "As condições são: preço base R$ 530.000, entrada de 20%, saldo em até 24 parcelas (Price – 0,99% a.m.), condomínio aproximado de R$ 500/mês.",
   CONVERSAO:
-    "Posso te enviar o material completo do empreendimento? Ou se preferir, posso enviar a planta ou agendar uma visita. O que faz mais sentido para você?",
+    "Posso te ajudar com:\n\n1️⃣ *Enviar material* do empreendimento\n2️⃣ *Enviar a planta*\n3️⃣ *Agendar uma visita*\n4️⃣ *Falar com um consultor*\n\nO que prefere?",
+  POS_CONVERSAO:
+    "Enviei o material! Se quiser, posso agendar uma visita ou te conectar com um consultor. É só me dizer.",
 };
 
 const conversationStateService = {
@@ -581,16 +584,25 @@ const openclawWebhookReceiver = {
       const currentState = lead.conversation_state || "START";
       const lower = message.toLowerCase();
 
-      // Special handling for CONVERSAO state — detect affirmative responses
-      if (currentState === "CONVERSAO") {
-        const wantsMaterial = /material|sim|pode|enviar|manda|quero|ok|claro|por favor|apresentação|book|brochura/i.test(lower);
-        const wantsPlanta = /planta/i.test(lower);
-        const wantsVisita = /visita|conhecer|ir até|ver pessoalmente|agendar/i.test(lower);
-        const wantsProposal = /proposta|orçamento|valores|preço/i.test(lower);
-        const wantsHuman = /falar|humano|atendente|consultor|alguém/i.test(lower);
+      // Special handling for CONVERSAO and POS_CONVERSAO states
+      if (currentState === "CONVERSAO" || currentState === "POS_CONVERSAO") {
+        const trimmed = lower.trim();
+
+        // Detect numbered menu choices
+        const isChoice1 = /^1$|^1️⃣/.test(trimmed);
+        const isChoice2 = /^2$|^2️⃣/.test(trimmed);
+        const isChoice3 = /^3$|^3️⃣/.test(trimmed);
+        const isChoice4 = /^4$|^4️⃣/.test(trimmed);
+
+        // Detect intent from keywords + numbered choices
+        const wantsMaterial = isChoice1 || /material|sim|pode|enviar|manda|quero|ok|claro|por favor|apresentação|book|brochura/i.test(lower);
+        const wantsPlanta = isChoice2 || /planta/i.test(lower);
+        const wantsVisita = isChoice3 || /visita|conhecer|ir até|ver pessoalmente|agendar/i.test(lower);
+        const wantsHuman = isChoice4 || /falar|humano|atendente|consultor|alguém/i.test(lower);
+        const wantsProposal = /proposta|orçamento|simulação/i.test(lower);
 
         if (wantsVisita || wantsProposal || wantsHuman) {
-          // Trigger handoff for high-intent actions
+          // High-intent → handoff to human
           const reason = wantsVisita ? "Lead solicitou visita" : wantsProposal ? "Lead solicitou proposta" : "Lead pediu atendimento humano";
           updates.human_handoff = true;
           updates.handoff_reason = reason;
@@ -603,19 +615,33 @@ const openclawWebhookReceiver = {
           await handoffRouterService.createHandoff(lead.id, reason);
           botResponse = getBotMessages().TRANSFERENCIA_HUMANA;
         } else if (wantsMaterial || wantsPlanta) {
-          // Send materials and acknowledge
-          botResponse = "Perfeito! Estou enviando o material para você. Qualquer dúvida, estou à disposição. Posso também agendar uma visita se quiser conhecer pessoalmente.";
-          updates.conversation_state = "CONVERSAO";
+          // Send materials — determine types explicitly
+          const materialTypes = [];
+          if (wantsPlanta) materialTypes.push("planta");
+          if (wantsMaterial) materialTypes.push("apresentacao", "pdf");
+          updates._dispatchMaterialTypes = materialTypes;
+          updates.conversation_state = "POS_CONVERSAO";
+          botResponse = "Perfeito! Estou enviando o material para você. Qualquer dúvida, estou à disposição.";
         } else {
-          // Generic affirmative or unrecognized — offer options clearly
-          botResponse = "Posso te ajudar com:\n\n1️⃣ *Enviar material* do empreendimento\n2️⃣ *Enviar a planta*\n3️⃣ *Agendar uma visita*\n4️⃣ *Falar com um consultor*\n\nO que prefere?";
+          // Unrecognized input — show clear menu
           updates.conversation_state = "CONVERSAO";
+          botResponse = BOT_MESSAGES_STATIC.CONVERSAO;
         }
       } else {
-        const nextState = conversationStateService.getNextState(currentState, detectedProfile);
-        updates.conversation_state = nextState;
-        const profile = updates.profile_type || lead.profile_type;
-        botResponse = conversationStateService.getBotResponse(nextState, profile);
+        // ── General state advance ──
+        const isQuestion = /\?|como assim|não entendi|o que é|qual|pode explicar|me explica|como funciona/i.test(lower);
+
+        if (isQuestion && currentState !== "START") {
+          // Don't advance — repeat current response
+          updates.conversation_state = currentState;
+          const profile = updates.profile_type || lead.profile_type;
+          botResponse = conversationStateService.getBotResponse(currentState, profile);
+        } else {
+          const nextState = conversationStateService.getNextState(currentState, detectedProfile);
+          updates.conversation_state = nextState;
+          const profile = updates.profile_type || lead.profile_type;
+          botResponse = conversationStateService.getBotResponse(nextState, profile);
+        }
       }
     }
 
@@ -631,7 +657,22 @@ const openclawWebhookReceiver = {
     await supabase.update("bot_leads", { id: lead.id }, updates);
 
     // ── materialDispatchService: send materials if requested ──
-    const materialsSent = await materialDispatchService.dispatch(phone, message);
+    let materialsSent = [];
+    const explicitTypes = updates._dispatchMaterialTypes;
+    delete updates._dispatchMaterialTypes;
+    if (explicitTypes && explicitTypes.length > 0) {
+      // CONVERSAO handler determined explicit material types
+      const materials = await materialDispatchService.getActiveMaterials(explicitTypes);
+      for (const material of materials) {
+        if (material.url && !material.url.includes("example.com")) {
+          await whatsappMessageService.sendMedia(phone, material.url, material.name);
+          materialsSent.push({ type: material.type, name: material.name });
+        }
+      }
+      log("materialDispatch", "explicit dispatch", { phone, types: explicitTypes, sent: materialsSent.length });
+    } else {
+      materialsSent = await materialDispatchService.dispatch(phone, message);
+    }
 
     // ── whatsappMessageService: send bot response ──
     const whatsappResult = await whatsappMessageService.sendText(phone, botResponse);
