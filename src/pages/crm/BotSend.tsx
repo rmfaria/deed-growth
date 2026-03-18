@@ -179,34 +179,35 @@ const BotSend = () => {
 
             {/* Texto */}
             <TabsContent value="text" className="space-y-4">
-              {botConfig && (
-                <div>
-                  <Label>Script de Vendas</Label>
-                  <Select
-                    onValueChange={(key) => {
-                      const raw = botConfig[key] as string | undefined;
-                      if (!raw) return;
-                      const persona = (botConfig.persona as string) || "Rogério";
-                      setMessage(raw.replace(/\{persona\}/g, persona));
-                    }}
-                  >
-                    <SelectTrigger className="mt-1.5">
-                      <SelectValue placeholder="Selecionar script..." />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {SCRIPT_OPTIONS.map((opt) => (
-                        <SelectItem key={opt.key} value={opt.key} disabled={!botConfig[opt.key]}>
-                          <div className="flex items-center gap-2">
-                            <ScrollText size={14} className="text-muted-foreground" />
-                            <span>{opt.label}</span>
-                          </div>
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                  <p className="text-xs text-muted-foreground mt-1">Preenche a mensagem com o texto configurado em Configurações</p>
-                </div>
-              )}
+              <div>
+                <Label>Script de Vendas</Label>
+                <Select
+                  onValueChange={(key) => {
+                    const raw = botConfig?.[key] as string | undefined;
+                    if (!raw) {
+                      toast.info("Script não configurado. Acesse Configurações do Bot para definir.");
+                      return;
+                    }
+                    const persona = (botConfig?.persona as string) || "Rogério";
+                    setMessage(raw.replace(/\{persona\}/g, persona));
+                  }}
+                >
+                  <SelectTrigger className="mt-1.5">
+                    <SelectValue placeholder="Selecionar script..." />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {SCRIPT_OPTIONS.map((opt) => (
+                      <SelectItem key={opt.key} value={opt.key}>
+                        <div className="flex items-center gap-2">
+                          <ScrollText size={14} className="text-muted-foreground" />
+                          <span>{opt.label}</span>
+                        </div>
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <p className="text-xs text-muted-foreground mt-1">Preenche a mensagem com o texto configurado em Configurações</p>
+              </div>
               <div>
                 <Label>Mensagem</Label>
                 <Textarea
