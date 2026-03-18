@@ -53,6 +53,237 @@ export type Database = {
         }
         Relationships: []
       }
+      bot_config: {
+        Row: {
+          id: string
+          key: string
+          updated_at: string | null
+          value: Json
+        }
+        Insert: {
+          id?: string
+          key: string
+          updated_at?: string | null
+          value?: Json
+        }
+        Update: {
+          id?: string
+          key?: string
+          updated_at?: string | null
+          value?: Json
+        }
+        Relationships: []
+      }
+      bot_handoffs: {
+        Row: {
+          assigned_to: string | null
+          created_at: string | null
+          id: string
+          lead_id: string
+          notes: string | null
+          reason: string
+          resolved_at: string | null
+          status: string | null
+        }
+        Insert: {
+          assigned_to?: string | null
+          created_at?: string | null
+          id?: string
+          lead_id: string
+          notes?: string | null
+          reason: string
+          resolved_at?: string | null
+          status?: string | null
+        }
+        Update: {
+          assigned_to?: string | null
+          created_at?: string | null
+          id?: string
+          lead_id?: string
+          notes?: string | null
+          reason?: string
+          resolved_at?: string | null
+          status?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "bot_handoffs_lead_id_fkey"
+            columns: ["lead_id"]
+            isOneToOne: false
+            referencedRelation: "bot_leads"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      bot_leads: {
+        Row: {
+          attendance_status: string | null
+          construction_interest: boolean | null
+          conversation_state: string | null
+          created_at: string | null
+          desired_area: string | null
+          handoff_reason: string | null
+          human_handoff: boolean | null
+          id: string
+          last_message_at: string | null
+          name: string
+          objective: string | null
+          origin: string | null
+          phone: string
+          profile_type: string | null
+          score: number | null
+          score_classification: string | null
+          updated_at: string | null
+          visit_interest: boolean | null
+        }
+        Insert: {
+          attendance_status?: string | null
+          construction_interest?: boolean | null
+          conversation_state?: string | null
+          created_at?: string | null
+          desired_area?: string | null
+          handoff_reason?: string | null
+          human_handoff?: boolean | null
+          id?: string
+          last_message_at?: string | null
+          name: string
+          objective?: string | null
+          origin?: string | null
+          phone: string
+          profile_type?: string | null
+          score?: number | null
+          score_classification?: string | null
+          updated_at?: string | null
+          visit_interest?: boolean | null
+        }
+        Update: {
+          attendance_status?: string | null
+          construction_interest?: boolean | null
+          conversation_state?: string | null
+          created_at?: string | null
+          desired_area?: string | null
+          handoff_reason?: string | null
+          human_handoff?: boolean | null
+          id?: string
+          last_message_at?: string | null
+          name?: string
+          objective?: string | null
+          origin?: string | null
+          phone?: string
+          profile_type?: string | null
+          score?: number | null
+          score_classification?: string | null
+          updated_at?: string | null
+          visit_interest?: boolean | null
+        }
+        Relationships: []
+      }
+      bot_materials: {
+        Row: {
+          category: string | null
+          created_at: string | null
+          id: string
+          is_active: boolean | null
+          name: string
+          type: string
+          updated_at: string | null
+          url: string | null
+        }
+        Insert: {
+          category?: string | null
+          created_at?: string | null
+          id?: string
+          is_active?: boolean | null
+          name: string
+          type: string
+          updated_at?: string | null
+          url?: string | null
+        }
+        Update: {
+          category?: string | null
+          created_at?: string | null
+          id?: string
+          is_active?: boolean | null
+          name?: string
+          type?: string
+          updated_at?: string | null
+          url?: string | null
+        }
+        Relationships: []
+      }
+      bot_messages: {
+        Row: {
+          content: string
+          created_at: string | null
+          direction: string
+          id: string
+          lead_id: string
+          message_type: string | null
+          metadata: Json | null
+        }
+        Insert: {
+          content: string
+          created_at?: string | null
+          direction: string
+          id?: string
+          lead_id: string
+          message_type?: string | null
+          metadata?: Json | null
+        }
+        Update: {
+          content?: string
+          created_at?: string | null
+          direction?: string
+          id?: string
+          lead_id?: string
+          message_type?: string | null
+          metadata?: Json | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "bot_messages_lead_id_fkey"
+            columns: ["lead_id"]
+            isOneToOne: false
+            referencedRelation: "bot_leads"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      bot_visits: {
+        Row: {
+          created_at: string | null
+          id: string
+          lead_id: string
+          notes: string | null
+          scheduled_at: string | null
+          status: string | null
+        }
+        Insert: {
+          created_at?: string | null
+          id?: string
+          lead_id: string
+          notes?: string | null
+          scheduled_at?: string | null
+          status?: string | null
+        }
+        Update: {
+          created_at?: string | null
+          id?: string
+          lead_id?: string
+          notes?: string | null
+          scheduled_at?: string | null
+          status?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "bot_visits_lead_id_fkey"
+            columns: ["lead_id"]
+            isOneToOne: false
+            referencedRelation: "bot_leads"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       campaign_recipients: {
         Row: {
           campaign_id: string
@@ -338,6 +569,41 @@ export type Database = {
           user_id?: string
         }
         Relationships: []
+      }
+      score_events: {
+        Row: {
+          created_at: string | null
+          description: string | null
+          event_type: string
+          id: string
+          lead_id: string
+          points: number
+        }
+        Insert: {
+          created_at?: string | null
+          description?: string | null
+          event_type: string
+          id?: string
+          lead_id: string
+          points: number
+        }
+        Update: {
+          created_at?: string | null
+          description?: string | null
+          event_type?: string
+          id?: string
+          lead_id?: string
+          points?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "score_events_lead_id_fkey"
+            columns: ["lead_id"]
+            isOneToOne: false
+            referencedRelation: "bot_leads"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       user_roles: {
         Row: {
