@@ -6,7 +6,7 @@ import CasesSection from "@/components/CasesSection";
 import KeywordsSection from "@/components/KeywordsSection";
 import CTASection from "@/components/CTASection";
 import Footer from "@/components/Footer";
-import WhatsAppButton from "@/components/WhatsAppButton";
+import ChatWidget from "@/components/ChatWidget";
 
 const Index = () => {
   return (
@@ -21,7 +21,7 @@ const Index = () => {
         <CTASection />
       </main>
       <Footer />
-      <WhatsAppButton />
+      <ChatWidget />
     </>
   );
 };

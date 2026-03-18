@@ -1,6 +1,6 @@
 import Header from "@/components/Header";
 import Footer from "@/components/Footer";
-import WhatsAppButton from "@/components/WhatsAppButton";
+import ChatWidget from "@/components/ChatWidget";
 import { motion } from "framer-motion";
 import { ArrowRight, Phone, Mail, MapPin } from "lucide-react";
 
@@ -105,7 +105,7 @@ const Contato = () => {
         </section>
       </main>
       <Footer />
-      <WhatsAppButton />
+      <ChatWidget />
     </>
   );
 };

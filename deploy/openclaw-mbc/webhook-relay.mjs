@@ -1313,6 +1313,72 @@ const server = createServer(async (req, res) => {
     }
   }
 
+  // ── Web Chat: same bot flow but returns response directly ──
+  if (url.pathname === "/api/webhook/webchat" && req.method === "POST") {
+    try {
+      const body = await readBody(req);
+      const { session_id, message: chatMessage, name } = body;
+
+      if (!session_id || !chatMessage) {
+        return jsonResponse(res, 400, { error: "Missing: session_id, message" });
+      }
+
+      // Use session_id as phone (prefixed to avoid collision with real phones)
+      const webPhone = `web-${session_id}`;
+      const senderName = name || "Visitante do Site";
+
+      // Process through the same orchestrator
+      const result = await openclawWebhookReceiver.process({
+        phone: webPhone,
+        message: chatMessage,
+        sender_name: senderName,
+        origin: "webchat",
+      });
+
+      return jsonResponse(res, 200, {
+        ok: true,
+        response: result.body.bot_response,
+        lead_id: result.body.lead_id,
+        state: result.body.conversation_state,
+        action: result.body.materials_sent?.length > 0 ? "materials_sent" : null,
+      });
+    } catch (err) {
+      log("webchat", "error", { error: err.message });
+      return jsonResponse(res, 500, { error: err.message });
+    }
+  }
+
+  // ── Web Chat: load conversation history ──
+  if (url.pathname === "/api/webhook/webchat/history" && req.method === "POST") {
+    try {
+      const body = await readBody(req);
+      const { session_id } = body;
+      if (!session_id) return jsonResponse(res, 400, { error: "Missing: session_id" });
+
+      const webPhone = `web-${session_id}`;
+      const lead = await supabase.selectOne("bot_leads", { phone: webPhone });
+      if (!lead || lead.code === "PGRST116") {
+        return jsonResponse(res, 200, { ok: true, messages: [] });
+      }
+
+      const messages = await supabase.selectManyRaw(
+        "bot_messages",
+        `lead_id=eq.${lead.id}&order=created_at.asc&limit=50&select=direction,content,created_at`
+      );
+
+      return jsonResponse(res, 200, {
+        ok: true,
+        messages: messages.map((m) => ({
+          role: m.direction === "inbound" ? "user" : "bot",
+          text: m.content,
+          time: m.created_at,
+        })),
+      });
+    } catch (err) {
+      return jsonResponse(res, 500, { error: err.message });
+    }
+  }
+
   // ── Upload proxy: materials to Supabase Storage ──
   if (url.pathname === "/api/webhook/upload" && req.method === "POST") {
     try {

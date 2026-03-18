@@ -1,5 +1,5 @@
 import { useState } from "react";
-import WhatsAppButton from "@/components/WhatsAppButton";
+import ChatWidget from "@/components/ChatWidget";
 import { motion } from "framer-motion";
 import { ArrowRight, CheckCircle2, MapPin, Phone, TreePine, Shield, Lightbulb, Droplets, Home, Leaf } from "lucide-react";
 import { Link } from "react-router-dom";
@@ -283,7 +283,7 @@ const LpReservaPiedade = () => {
         </div>
       )}
 
-      <WhatsAppButton />
+      <ChatWidget />
     </>
   );
 };

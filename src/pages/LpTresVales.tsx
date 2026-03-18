@@ -1,6 +1,6 @@
 import Header from "@/components/Header";
 import Footer from "@/components/Footer";
-import WhatsAppButton from "@/components/WhatsAppButton";
+import ChatWidget from "@/components/ChatWidget";
 import { motion } from "framer-motion";
 import { ArrowRight, CheckCircle2, MapPin, Leaf, Shield, Zap } from "lucide-react";
 import caseStudy1 from "@/assets/case-study-1.jpg";
@@ -144,7 +144,7 @@ const LpTresVales = () => {
         </section>
       </main>
       <Footer />
-      <WhatsAppButton />
+      <ChatWidget />
     </>
   );
 };
