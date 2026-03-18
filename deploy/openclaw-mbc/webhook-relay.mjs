@@ -558,11 +558,44 @@ const openclawWebhookReceiver = {
     } else {
       // ── conversationStateService: advance state ──
       const currentState = lead.conversation_state || "START";
-      const nextState = conversationStateService.getNextState(currentState, detectedProfile);
-      updates.conversation_state = nextState;
+      const lower = message.toLowerCase();
 
-      const profile = updates.profile_type || lead.profile_type;
-      botResponse = conversationStateService.getBotResponse(nextState, profile);
+      // Special handling for CONVERSAO state — detect affirmative responses
+      if (currentState === "CONVERSAO") {
+        const wantsMaterial = /material|sim|pode|enviar|manda|quero|ok|claro|por favor|apresentação|book|brochura/i.test(lower);
+        const wantsPlanta = /planta/i.test(lower);
+        const wantsVisita = /visita|conhecer|ir até|ver pessoalmente|agendar/i.test(lower);
+        const wantsProposal = /proposta|orçamento|valores|preço/i.test(lower);
+        const wantsHuman = /falar|humano|atendente|consultor|alguém/i.test(lower);
+
+        if (wantsVisita || wantsProposal || wantsHuman) {
+          // Trigger handoff for high-intent actions
+          const reason = wantsVisita ? "Lead solicitou visita" : wantsProposal ? "Lead solicitou proposta" : "Lead pediu atendimento humano";
+          updates.human_handoff = true;
+          updates.handoff_reason = reason;
+          updates.attendance_status = "aguardando_humano";
+          updates.conversation_state = "TRANSFERENCIA_HUMANA";
+          if (wantsVisita) {
+            updates.visit_interest = true;
+            await visitSchedulingService.createVisitRequest(lead.id, message);
+          }
+          await handoffRouterService.createHandoff(lead.id, reason);
+          botResponse = getBotMessages().TRANSFERENCIA_HUMANA;
+        } else if (wantsMaterial || wantsPlanta) {
+          // Send materials and acknowledge
+          botResponse = "Perfeito! Estou enviando o material para você. Qualquer dúvida, estou à disposição. Posso também agendar uma visita se quiser conhecer pessoalmente.";
+          updates.conversation_state = "CONVERSAO";
+        } else {
+          // Generic affirmative or unrecognized — offer options clearly
+          botResponse = "Posso te ajudar com:\n\n1️⃣ *Enviar material* do empreendimento\n2️⃣ *Enviar a planta*\n3️⃣ *Agendar uma visita*\n4️⃣ *Falar com um consultor*\n\nO que prefere?";
+          updates.conversation_state = "CONVERSAO";
+        }
+      } else {
+        const nextState = conversationStateService.getNextState(currentState, detectedProfile);
+        updates.conversation_state = nextState;
+        const profile = updates.profile_type || lead.profile_type;
+        botResponse = conversationStateService.getBotResponse(nextState, profile);
+      }
     }
 
     // ── Save outbound message ──
