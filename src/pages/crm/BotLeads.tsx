@@ -3,7 +3,8 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Search, Download, Upload, Eye, UserCheck, Send, Calendar, Loader2 } from "lucide-react";
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
+import { Search, Download, Upload, Eye, UserCheck, Send, Calendar, Loader2, Trash2, RotateCcw } from "lucide-react";
 import { ScoreBadge } from "@/components/crm/bot/ScoreBadge";
 import { StatusBadge } from "@/components/crm/bot/StatusBadge";
 import { useNavigate } from "react-router-dom";
@@ -42,6 +43,8 @@ const BotLeads = () => {
   const [statusFilter, setStatusFilter] = useState("all");
   const [profileFilter, setProfileFilter] = useState("all");
   const [importing, setImporting] = useState(false);
+  const [showTrash, setShowTrash] = useState(false);
+  const [deletingLead, setDeletingLead] = useState<{ id: string; name: string } | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
   const handleImportCSV = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -104,7 +107,10 @@ const BotLeads = () => {
     }
   };
 
-  const filtered = allLeads.filter((l) => {
+  const trashLeads = allLeads.filter((l) => l.attendance_status === "encerrado");
+  const activeLeads = allLeads.filter((l) => l.attendance_status !== "encerrado");
+
+  const filtered = (showTrash ? trashLeads : activeLeads).filter((l) => {
     const matchSearch = l.name.toLowerCase().includes(search.toLowerCase()) ||
       l.phone.includes(search) ||
       (l.origin || '').toLowerCase().includes(search.toLowerCase());
@@ -113,6 +119,26 @@ const BotLeads = () => {
     const matchProfile = profileFilter === 'all' || l.profile_type === profileFilter;
     return matchSearch && matchScore && matchStatus && matchProfile;
   });
+
+  const handleMoveToTrash = async (leadId: string) => {
+    await supabase.from("bot_leads").update({ attendance_status: "encerrado" }).eq("id", leadId);
+    queryClient.invalidateQueries({ queryKey: ["bot-leads"] });
+    toast.success("Lead movido para a lixeira.");
+    setDeletingLead(null);
+  };
+
+  const handleRestore = async (leadId: string) => {
+    await supabase.from("bot_leads").update({ attendance_status: "bot" }).eq("id", leadId);
+    queryClient.invalidateQueries({ queryKey: ["bot-leads"] });
+    toast.success("Lead restaurado.");
+  };
+
+  const handleDeletePermanent = async (leadId: string) => {
+    await supabase.from("bot_leads").delete().eq("id", leadId);
+    queryClient.invalidateQueries({ queryKey: ["bot-leads"] });
+    toast.success("Lead removido permanentemente.");
+    setDeletingLead(null);
+  };
 
   const exportCSV = () => {
     const headers = ["Nome", "Telefone", "Origem", "Perfil", "Objetivo", "Metragem", "Score", "Classificação", "Status", "Estado Conversa"];
@@ -140,18 +166,35 @@ const BotLeads = () => {
     <div className="space-y-6">
       <div className="flex items-center justify-between flex-wrap gap-4">
         <div>
-          <h1 className="font-display text-2xl font-bold text-foreground">Leads MBC</h1>
-          <p className="text-muted-foreground font-body text-sm">{filtered.length} leads encontrados</p>
+          <h1 className="font-display text-2xl font-bold text-foreground">
+            {showTrash ? "Lixeira" : "Leads MBC"}
+          </h1>
+          <p className="text-muted-foreground font-body text-sm">
+            {filtered.length} leads {showTrash ? "na lixeira" : "encontrados"}
+            {!showTrash && trashLeads.length > 0 && ` • ${trashLeads.length} na lixeira`}
+          </p>
         </div>
         <div className="flex gap-2">
-          <input ref={fileRef} type="file" accept=".csv" className="hidden" onChange={handleImportCSV} />
-          <Button variant="outline" onClick={() => fileRef.current?.click()} disabled={importing} className="gap-2">
-            {importing ? <Loader2 size={16} className="animate-spin" /> : <Upload size={16} />}
-            {importing ? "Importando..." : "Importar CSV"}
+          <Button
+            variant={showTrash ? "default" : "outline"}
+            onClick={() => setShowTrash(!showTrash)}
+            className="gap-2"
+          >
+            <Trash2 size={16} />
+            {showTrash ? "Ver Ativos" : `Lixeira${trashLeads.length > 0 ? ` (${trashLeads.length})` : ""}`}
           </Button>
-          <Button variant="outline" onClick={exportCSV} className="gap-2">
-            <Download size={16} /> Exportar CSV
-          </Button>
+          {!showTrash && (
+            <>
+              <input ref={fileRef} type="file" accept=".csv" className="hidden" onChange={handleImportCSV} />
+              <Button variant="outline" onClick={() => fileRef.current?.click()} disabled={importing} className="gap-2">
+                {importing ? <Loader2 size={16} className="animate-spin" /> : <Upload size={16} />}
+                {importing ? "Importando..." : "Importar CSV"}
+              </Button>
+              <Button variant="outline" onClick={exportCSV} className="gap-2">
+                <Download size={16} /> Exportar CSV
+              </Button>
+            </>
+          )}
         </div>
       </div>
 
@@ -221,21 +264,40 @@ const BotLeads = () => {
                 </TableCell>
                 <TableCell className="text-right" onClick={(e) => e.stopPropagation()}>
                   <div className="flex justify-end gap-1">
-                    <Button variant="ghost" size="icon" className="h-8 w-8" title="Ver detalhes" onClick={() => navigate(`/crm/bot/leads/${lead.id}`)}>
-                      <Eye size={14} />
-                    </Button>
-                    <Button variant="ghost" size="icon" className="h-8 w-8" title="Enviar material"
-                      onClick={() => materialMutation.mutate({ leadId: lead.id, materialNames: ["Material MBC"] })}>
-                      <Send size={14} />
-                    </Button>
-                    <Button variant="ghost" size="icon" className="h-8 w-8" title="Agendar visita"
-                      onClick={() => visitMutation.mutate({ leadId: lead.id, notes: "Agendamento rápido via lista" })}>
-                      <Calendar size={14} />
-                    </Button>
-                    <Button variant="ghost" size="icon" className="h-8 w-8" title="Transferir para humano"
-                      onClick={() => handoffMutation.mutate({ leadId: lead.id, reason: "Transferência manual via lista" })}>
-                      <UserCheck size={14} />
-                    </Button>
+                    {showTrash ? (
+                      <>
+                        <Button variant="ghost" size="icon" className="h-8 w-8" title="Restaurar lead"
+                          onClick={() => handleRestore(lead.id)}>
+                          <RotateCcw size={14} className="text-emerald-500" />
+                        </Button>
+                        <Button variant="ghost" size="icon" className="h-8 w-8" title="Excluir permanentemente"
+                          onClick={() => setDeletingLead({ id: lead.id, name: lead.name })}>
+                          <Trash2 size={14} className="text-destructive" />
+                        </Button>
+                      </>
+                    ) : (
+                      <>
+                        <Button variant="ghost" size="icon" className="h-8 w-8" title="Ver detalhes" onClick={() => navigate(`/crm/bot/leads/${lead.id}`)}>
+                          <Eye size={14} />
+                        </Button>
+                        <Button variant="ghost" size="icon" className="h-8 w-8" title="Enviar material"
+                          onClick={() => materialMutation.mutate({ leadId: lead.id, materialNames: ["Material MBC"] })}>
+                          <Send size={14} />
+                        </Button>
+                        <Button variant="ghost" size="icon" className="h-8 w-8" title="Agendar visita"
+                          onClick={() => visitMutation.mutate({ leadId: lead.id, notes: "Agendamento rápido via lista" })}>
+                          <Calendar size={14} />
+                        </Button>
+                        <Button variant="ghost" size="icon" className="h-8 w-8" title="Transferir para humano"
+                          onClick={() => handoffMutation.mutate({ leadId: lead.id, reason: "Transferência manual via lista" })}>
+                          <UserCheck size={14} />
+                        </Button>
+                        <Button variant="ghost" size="icon" className="h-8 w-8" title="Mover para lixeira"
+                          onClick={() => setDeletingLead({ id: lead.id, name: lead.name })}>
+                          <Trash2 size={14} className="text-destructive" />
+                        </Button>
+                      </>
+                    )}
                   </div>
                 </TableCell>
               </TableRow>
@@ -248,6 +310,39 @@ const BotLeads = () => {
           </TableBody>
         </Table>
       </div>
+
+      {/* Delete/Trash Confirmation */}
+      <AlertDialog open={!!deletingLead} onOpenChange={(open) => !open && setDeletingLead(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              {showTrash ? "Excluir permanentemente?" : "Mover para lixeira?"}
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              {showTrash
+                ? `"${deletingLead?.name}" será removido permanentemente. Esta ação não pode ser desfeita.`
+                : `"${deletingLead?.name}" será movido para a lixeira. Você pode restaurá-lo depois.`
+              }
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancelar</AlertDialogCancel>
+            <AlertDialogAction
+              className={showTrash ? "bg-destructive text-destructive-foreground hover:bg-destructive/90" : ""}
+              onClick={() => {
+                if (!deletingLead) return;
+                if (showTrash) {
+                  handleDeletePermanent(deletingLead.id);
+                } else {
+                  handleMoveToTrash(deletingLead.id);
+                }
+              }}
+            >
+              {showTrash ? "Excluir" : "Mover para lixeira"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 };
