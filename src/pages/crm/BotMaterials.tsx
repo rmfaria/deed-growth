@@ -8,7 +8,7 @@ import { Plus, FileText, Map, Image, Video, Table2, BookOpen, ExternalLink, Penc
 import { mockMaterials } from "@/services/bot/mockData";
 import type { MaterialType } from "@/services/bot/types";
 
-const typeIcons: Record<MaterialType, React.ComponentType<{ size?: number; className?: string }>> = {
+const typeIcons: Record<MaterialType, React.ElementType> = {
   apresentacao: BookOpen,
   planta: FileText,
   mapa: Map,
