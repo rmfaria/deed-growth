@@ -8,10 +8,14 @@ import { ScoreBadge } from "@/components/crm/bot/ScoreBadge";
 import { StatusBadge } from "@/components/crm/bot/StatusBadge";
 import { useNavigate } from "react-router-dom";
 import { useBotLeads } from "@/hooks/useBotData";
+import { useHandoffLead, useScheduleVisit, useSendMaterial } from "@/hooks/useBotActions";
 
 const BotLeads = () => {
   const navigate = useNavigate();
   const { data: allLeads = [], isLoading } = useBotLeads();
+  const handoffMutation = useHandoffLead();
+  const visitMutation = useScheduleVisit();
+  const materialMutation = useSendMaterial();
   const [search, setSearch] = useState("");
   const [scoreFilter, setScoreFilter] = useState("all");
   const [statusFilter, setStatusFilter] = useState("all");
@@ -130,13 +134,16 @@ const BotLeads = () => {
                     <Button variant="ghost" size="icon" className="h-8 w-8" title="Ver detalhes" onClick={() => navigate(`/crm/bot/leads/${lead.id}`)}>
                       <Eye size={14} />
                     </Button>
-                    <Button variant="ghost" size="icon" className="h-8 w-8" title="Enviar material">
+                    <Button variant="ghost" size="icon" className="h-8 w-8" title="Enviar material"
+                      onClick={() => materialMutation.mutate({ leadId: lead.id, materialNames: ["Material MBC"] })}>
                       <Send size={14} />
                     </Button>
-                    <Button variant="ghost" size="icon" className="h-8 w-8" title="Agendar visita">
+                    <Button variant="ghost" size="icon" className="h-8 w-8" title="Agendar visita"
+                      onClick={() => visitMutation.mutate({ leadId: lead.id, notes: "Agendamento rápido via lista" })}>
                       <Calendar size={14} />
                     </Button>
-                    <Button variant="ghost" size="icon" className="h-8 w-8" title="Transferir para humano">
+                    <Button variant="ghost" size="icon" className="h-8 w-8" title="Transferir para humano"
+                      onClick={() => handoffMutation.mutate({ leadId: lead.id, reason: "Transferência manual via lista" })}>
                       <UserCheck size={14} />
                     </Button>
                   </div>

@@ -1,12 +1,19 @@
+import { useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
+import { Label } from "@/components/ui/label";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { ArrowLeft, Send, Calendar, UserCheck, MessageSquare, Target, MapPin, Building2, TrendingUp, Loader2 } from "lucide-react";
 import { ScoreBadge } from "@/components/crm/bot/ScoreBadge";
 import { StatusBadge } from "@/components/crm/bot/StatusBadge";
 import { ConversationTimeline } from "@/components/crm/bot/ConversationTimeline";
 import { FLOW_STAGES } from "@/services/bot/types";
-import { useBotLead, useBotMessages, useScoreEvents, useBotVisits, useBotHandoffs } from "@/hooks/useBotData";
+import { useBotLead, useBotMessages, useScoreEvents, useBotVisits, useBotHandoffs, useBotMaterials } from "@/hooks/useBotData";
+import { useHandoffLead, useScheduleVisit, useSendMaterial, useAddNote } from "@/hooks/useBotActions";
 
 const BotLeadDetail = () => {
   const { id } = useParams<{ id: string }>();
@@ -16,6 +23,23 @@ const BotLeadDetail = () => {
   const { data: scoreEvents = [] } = useScoreEvents(id);
   const { data: visits = [] } = useBotVisits(id);
   const { data: handoffs = [] } = useBotHandoffs(id);
+  const { data: materials = [] } = useBotMaterials();
+
+  const handoffMutation = useHandoffLead();
+  const visitMutation = useScheduleVisit();
+  const materialMutation = useSendMaterial();
+  const noteMutation = useAddNote();
+
+  const [showMaterial, setShowMaterial] = useState(false);
+  const [showVisit, setShowVisit] = useState(false);
+  const [showHandoff, setShowHandoff] = useState(false);
+  const [showNote, setShowNote] = useState(false);
+
+  const [selectedMaterials, setSelectedMaterials] = useState<string[]>([]);
+  const [visitDate, setVisitDate] = useState("");
+  const [visitNotes, setVisitNotes] = useState("");
+  const [handoffReason, setHandoffReason] = useState("");
+  const [noteText, setNoteText] = useState("");
 
   if (loadingLead) {
     return (
@@ -35,6 +59,35 @@ const BotLeadDetail = () => {
   }
 
   const currentStageIndex = FLOW_STAGES.findIndex(s => s.key === lead.conversation_state);
+  const activeMaterials = materials.filter(m => m.is_active);
+
+  const handleSendMaterial = () => {
+    if (selectedMaterials.length === 0) return;
+    materialMutation.mutate({ leadId: lead.id, materialNames: selectedMaterials });
+    setShowMaterial(false);
+    setSelectedMaterials([]);
+  };
+
+  const handleScheduleVisit = () => {
+    visitMutation.mutate({ leadId: lead.id, scheduledAt: visitDate || undefined, notes: visitNotes || undefined });
+    setShowVisit(false);
+    setVisitDate("");
+    setVisitNotes("");
+  };
+
+  const handleHandoff = () => {
+    if (!handoffReason.trim()) return;
+    handoffMutation.mutate({ leadId: lead.id, reason: handoffReason });
+    setShowHandoff(false);
+    setHandoffReason("");
+  };
+
+  const handleAddNote = () => {
+    if (!noteText.trim()) return;
+    noteMutation.mutate({ leadId: lead.id, note: noteText });
+    setShowNote(false);
+    setNoteText("");
+  };
 
   return (
     <div className="space-y-6">
@@ -53,10 +106,10 @@ const BotLeadDetail = () => {
       </div>
 
       <div className="flex gap-2 flex-wrap">
-        <Button variant="outline" className="gap-2"><Send size={14} /> Enviar Material</Button>
-        <Button variant="outline" className="gap-2"><Calendar size={14} /> Agendar Visita</Button>
-        <Button variant="outline" className="gap-2"><UserCheck size={14} /> Transferir para Humano</Button>
-        <Button variant="outline" className="gap-2"><MessageSquare size={14} /> Adicionar Observação</Button>
+        <Button variant="outline" className="gap-2" onClick={() => setShowMaterial(true)}><Send size={14} /> Enviar Material</Button>
+        <Button variant="outline" className="gap-2" onClick={() => setShowVisit(true)}><Calendar size={14} /> Agendar Visita</Button>
+        <Button variant="outline" className="gap-2" onClick={() => setShowHandoff(true)}><UserCheck size={14} /> Transferir para Humano</Button>
+        <Button variant="outline" className="gap-2" onClick={() => setShowNote(true)}><MessageSquare size={14} /> Adicionar Observação</Button>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -163,6 +216,100 @@ const BotLeadDetail = () => {
           )}
         </div>
       )}
+
+      {/* Modal: Enviar Material */}
+      <Dialog open={showMaterial} onOpenChange={setShowMaterial}>
+        <DialogContent>
+          <DialogHeader><DialogTitle>Enviar Material</DialogTitle></DialogHeader>
+          <div className="space-y-3 py-2">
+            {activeMaterials.length > 0 ? activeMaterials.map((m) => (
+              <label key={m.id} className="flex items-center gap-3 cursor-pointer">
+                <Checkbox
+                  checked={selectedMaterials.includes(m.name)}
+                  onCheckedChange={(checked) => {
+                    setSelectedMaterials(prev => checked ? [...prev, m.name] : prev.filter(n => n !== m.name));
+                  }}
+                />
+                <span className="text-sm">{m.name}</span>
+                <span className="text-xs text-muted-foreground ml-auto capitalize">{m.type}</span>
+              </label>
+            )) : (
+              <p className="text-sm text-muted-foreground">Nenhum material ativo cadastrado.</p>
+            )}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowMaterial(false)}>Cancelar</Button>
+            <Button onClick={handleSendMaterial} disabled={selectedMaterials.length === 0 || materialMutation.isPending}>
+              {materialMutation.isPending ? <Loader2 size={14} className="animate-spin mr-2" /> : null}
+              Enviar ({selectedMaterials.length})
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Modal: Agendar Visita */}
+      <Dialog open={showVisit} onOpenChange={setShowVisit}>
+        <DialogContent>
+          <DialogHeader><DialogTitle>Agendar Visita</DialogTitle></DialogHeader>
+          <div className="space-y-4 py-2">
+            <div>
+              <Label>Data e horário (opcional)</Label>
+              <Input type="datetime-local" value={visitDate} onChange={(e) => setVisitDate(e.target.value)} className="mt-1.5" />
+            </div>
+            <div>
+              <Label>Observações</Label>
+              <Textarea value={visitNotes} onChange={(e) => setVisitNotes(e.target.value)} placeholder="Notas sobre a visita..." className="mt-1.5" rows={3} />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowVisit(false)}>Cancelar</Button>
+            <Button onClick={handleScheduleVisit} disabled={visitMutation.isPending}>
+              {visitMutation.isPending ? <Loader2 size={14} className="animate-spin mr-2" /> : null}
+              Agendar
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Modal: Transferir para Humano */}
+      <Dialog open={showHandoff} onOpenChange={setShowHandoff}>
+        <DialogContent>
+          <DialogHeader><DialogTitle>Transferir para Atendimento Humano</DialogTitle></DialogHeader>
+          <div className="space-y-4 py-2">
+            <div>
+              <Label>Motivo da transferência</Label>
+              <Textarea value={handoffReason} onChange={(e) => setHandoffReason(e.target.value)} placeholder="Ex: Lead solicitou proposta personalizada..." className="mt-1.5" rows={3} />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowHandoff(false)}>Cancelar</Button>
+            <Button onClick={handleHandoff} disabled={!handoffReason.trim() || handoffMutation.isPending}>
+              {handoffMutation.isPending ? <Loader2 size={14} className="animate-spin mr-2" /> : null}
+              Transferir
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Modal: Adicionar Observação */}
+      <Dialog open={showNote} onOpenChange={setShowNote}>
+        <DialogContent>
+          <DialogHeader><DialogTitle>Adicionar Observação</DialogTitle></DialogHeader>
+          <div className="space-y-4 py-2">
+            <div>
+              <Label>Observação</Label>
+              <Textarea value={noteText} onChange={(e) => setNoteText(e.target.value)} placeholder="Registre uma observação sobre o lead..." className="mt-1.5" rows={4} />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowNote(false)}>Cancelar</Button>
+            <Button onClick={handleAddNote} disabled={!noteText.trim() || noteMutation.isPending}>
+              {noteMutation.isPending ? <Loader2 size={14} className="animate-spin mr-2" /> : null}
+              Salvar
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 };

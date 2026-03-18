@@ -6,7 +6,8 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
 import { Separator } from "@/components/ui/separator";
-import { Save, Loader2 } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
+import { Save, Loader2, RefreshCw, CheckCircle2, XCircle, Circle } from "lucide-react";
 import { SCORE_RULES } from "@/services/bot/types";
 import { useBotConfig } from "@/hooks/useBotData";
 import { supabase } from "@/integrations/supabase/client";
@@ -22,6 +23,26 @@ const BotSettings = () => {
   const [businessHoursEnd, setBusinessHoursEnd] = useState("18:00");
   const [autoHandoffHot, setAutoHandoffHot] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [engineStatus, setEngineStatus] = useState<any>(null);
+  const [engineLoading, setEngineLoading] = useState(false);
+
+  const checkEngine = async () => {
+    setEngineLoading(true);
+    try {
+      const resp = await fetch("https://prod.nesecurity.com.br/mbc/api/webhook/stats");
+      if (resp.ok) {
+        setEngineStatus(await resp.json());
+      } else {
+        setEngineStatus({ error: true });
+      }
+    } catch {
+      setEngineStatus({ error: true });
+    } finally {
+      setEngineLoading(false);
+    }
+  };
+
+  useEffect(() => { checkEngine(); }, []);
 
   useEffect(() => {
     if (config) {
@@ -162,19 +183,71 @@ const BotSettings = () => {
         </CardContent>
       </Card>
 
-      <Card className="bg-card border-border border-dashed">
+      <Card className="bg-card border-border">
         <CardHeader>
-          <CardTitle className="font-display text-base text-muted-foreground">Integração OpenClaw</CardTitle>
-          <CardDescription>Placeholder para configuração futura</CardDescription>
+          <div className="flex items-center justify-between">
+            <div>
+              <CardTitle className="font-display text-base">Integração OpenClaw</CardTitle>
+              <CardDescription>Status dos serviços do engine em produção</CardDescription>
+            </div>
+            <Button variant="outline" size="sm" onClick={checkEngine} disabled={engineLoading} className="gap-2">
+              <RefreshCw size={14} className={engineLoading ? "animate-spin" : ""} />
+              Atualizar
+            </Button>
+          </div>
         </CardHeader>
-        <CardContent className="space-y-2 text-sm text-muted-foreground">
-          <p>• <span className="font-mono text-xs">openclawWebhookReceiver</span> — Recebimento de mensagens</p>
-          <p>• <span className="font-mono text-xs">conversationStateService</span> — Gerenciamento de estado</p>
-          <p>• <span className="font-mono text-xs">leadScoringService</span> — Motor de score</p>
-          <p>• <span className="font-mono text-xs">handoffRouterService</span> — Roteamento de handoff</p>
-          <p>• <span className="font-mono text-xs">materialDispatchService</span> — Envio de materiais</p>
-          <p>• <span className="font-mono text-xs">visitSchedulingService</span> — Agendamento de visitas</p>
-          <p>• <span className="font-mono text-xs">whatsappMessageService</span> — Envio via WhatsApp</p>
+        <CardContent className="space-y-3">
+          {engineStatus?.error ? (
+            <div className="flex items-center gap-2 text-sm text-destructive">
+              <XCircle size={16} />
+              <span>Engine offline ou inacessível</span>
+            </div>
+          ) : engineStatus ? (
+            <>
+              <div className="flex items-center gap-2 mb-3">
+                <CheckCircle2 size={16} className="text-emerald-500" />
+                <span className="text-sm font-medium text-foreground">Engine online</span>
+                <Badge variant="outline" className="ml-auto text-xs">
+                  uptime: {Math.floor(engineStatus.uptime / 60)}min
+                </Badge>
+              </div>
+              <div className="space-y-1.5">
+                {(engineStatus.services || [
+                  "openclawWebhookReceiver", "conversationStateService", "leadScoringService",
+                  "handoffRouterService", "materialDispatchService", "visitSchedulingService", "whatsappMessageService"
+                ]).map((svc: string) => (
+                  <div key={svc} className="flex items-center gap-2 py-1">
+                    <Circle size={8} className="text-emerald-500 fill-emerald-500" />
+                    <span className="font-mono text-xs text-foreground">{svc}</span>
+                  </div>
+                ))}
+              </div>
+              <Separator className="my-3" />
+              <div className="grid grid-cols-2 gap-2 text-xs">
+                <div className="flex items-center gap-2">
+                  {engineStatus.config?.supabase ? <CheckCircle2 size={12} className="text-emerald-500" /> : <XCircle size={12} className="text-destructive" />}
+                  <span className="text-muted-foreground">Supabase</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  {engineStatus.config?.orbit_core ? <CheckCircle2 size={12} className="text-emerald-500" /> : <XCircle size={12} className="text-destructive" />}
+                  <span className="text-muted-foreground">Orbit Core</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  {engineStatus.config?.whatsapp_api ? <CheckCircle2 size={12} className="text-emerald-500" /> : <XCircle size={12} className="text-muted-foreground" />}
+                  <span className="text-muted-foreground">WhatsApp API</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  {engineStatus.config?.webhook_secret ? <CheckCircle2 size={12} className="text-emerald-500" /> : <XCircle size={12} className="text-destructive" />}
+                  <span className="text-muted-foreground">Webhook Secret</span>
+                </div>
+              </div>
+            </>
+          ) : (
+            <div className="flex items-center gap-2 text-sm text-muted-foreground">
+              <Loader2 size={14} className="animate-spin" />
+              <span>Verificando engine...</span>
+            </div>
+          )}
         </CardContent>
       </Card>
 

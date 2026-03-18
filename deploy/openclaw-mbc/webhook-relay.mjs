@@ -117,6 +117,37 @@ const supabase = {
 };
 
 // ═══════════════════════════════════════════════════════════════════════════
+// CONFIG LOADER — reads bot_config from Supabase (cached 60s)
+// ═══════════════════════════════════════════════════════════════════════════
+
+let _configCache = {};
+let _configLoadedAt = 0;
+const CONFIG_TTL_MS = 60_000;
+
+async function loadBotConfig() {
+  if (Date.now() - _configLoadedAt < CONFIG_TTL_MS) return _configCache;
+  try {
+    const rows = await supabase.selectMany("bot_config", {});
+    const config = {};
+    if (Array.isArray(rows)) {
+      for (const row of rows) {
+        try { config[row.key] = JSON.parse(row.value); } catch { config[row.key] = row.value; }
+      }
+    }
+    _configCache = config;
+    _configLoadedAt = Date.now();
+    log("configLoader", "config loaded", { keys: Object.keys(config) });
+  } catch (err) {
+    log("configLoader", "failed to load config, using cache", { error: err.message });
+  }
+  return _configCache;
+}
+
+function getConfig(key, fallback) {
+  return _configCache[key] !== undefined ? _configCache[key] : fallback;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
 // SERVICE 1: conversationStateService
 // ═══════════════════════════════════════════════════════════════════════════
 
@@ -131,11 +162,23 @@ const STATE_TRANSITIONS = {
   CONVERSAO: "CONVERSAO", // stays until action
 };
 
-const BOT_MESSAGES = {
-  ABERTURA:
-    "Olá! Vi que você solicitou informações sobre os lotes do Metropolitan Business Center. Sou o Rogério, responsável pelo projeto. Posso te explicar rapidamente como funciona essa oportunidade.",
-  CONTEXTUALIZACAO:
-    "O MBC é um condomínio empresarial às margens da MG-10, próximo ao Aeroporto de Confins. Os lotes começam a partir de 1.000 m² e a região está em forte expansão logística.",
+function getBotMessages() {
+  const persona = getConfig("persona", "Rogério");
+  const openingMsg = getConfig("opening_message",
+    "Olá! Vi que você solicitou informações sobre os lotes do Metropolitan Business Center. Sou o {persona}, responsável pelo projeto. Posso te explicar rapidamente como funciona essa oportunidade.");
+  const contextMsg = getConfig("context_message",
+    "O MBC é um condomínio empresarial às margens da MG-10, próximo ao Aeroporto de Confins. Os lotes começam a partir de 1.000 m² e a região está em forte expansão logística.");
+  const transferMsg = getConfig("transfer_message",
+    "Vou te conectar com um consultor que vai cuidar de tudo para você. Em breve ele entrará em contato!");
+
+  return {
+    ABERTURA: openingMsg.replace("{persona}", persona).replace(/\{persona\}/g, persona),
+    CONTEXTUALIZACAO: contextMsg,
+    TRANSFERENCIA_HUMANA: transferMsg,
+  };
+}
+
+const BOT_MESSAGES_STATIC = {
   QUALIFICACAO_PRINCIPAL:
     "Você está avaliando para instalar sua empresa ou pensando como investimento?",
   QUALIFICACAO_SECUNDARIA_EMPRESA:
@@ -148,8 +191,6 @@ const BOT_MESSAGES = {
     "As condições são: preço base R$ 530.000, entrada de 20%, saldo em até 24 parcelas (Price – 0,99% a.m.), condomínio aproximado de R$ 500/mês.",
   CONVERSAO:
     "Posso te enviar o material completo do empreendimento? Ou se preferir, posso enviar a planta ou agendar uma visita. O que faz mais sentido para você?",
-  TRANSFERENCIA_HUMANA:
-    "Vou te conectar com um consultor que vai cuidar de tudo para você. Em breve ele entrará em contato!",
 };
 
 const conversationStateService = {
@@ -161,12 +202,14 @@ const conversationStateService = {
   },
 
   getBotResponse(state, profileType) {
+    const dynamic = getBotMessages();
+    const msgs = { ...BOT_MESSAGES_STATIC, ...dynamic };
     if (state === "QUALIFICACAO_SECUNDARIA") {
       return profileType === "empresa"
-        ? BOT_MESSAGES.QUALIFICACAO_SECUNDARIA_EMPRESA
-        : BOT_MESSAGES.QUALIFICACAO_SECUNDARIA_INVESTIMENTO;
+        ? msgs.QUALIFICACAO_SECUNDARIA_EMPRESA
+        : msgs.QUALIFICACAO_SECUNDARIA_INVESTIMENTO;
     }
-    return BOT_MESSAGES[state] || BOT_MESSAGES.CONVERSAO;
+    return msgs[state] || msgs.CONVERSAO;
   },
 };
 
@@ -271,7 +314,8 @@ const handoffRouterService = {
 
   needsHandoff(text, score) {
     const trigger = this.detectTrigger(text);
-    const isHotLead = score >= 51;
+    const autoHandoff = getConfig("auto_handoff_hot", true);
+    const isHotLead = autoHandoff && score >= 51;
     return {
       needed: !!trigger || isHotLead,
       reason: trigger ? `Detectado: ${trigger}` : isHotLead ? "Score alto (lead quente)" : null,
@@ -442,6 +486,9 @@ const openclawWebhookReceiver = {
       return { status: 400, body: { error: "Missing required fields: phone, message" } };
     }
 
+    // ── Load config from bot_config table ──
+    await loadBotConfig();
+
     // ── Find or create lead ──
     const lead = await this.findOrCreateLead(phone, senderName, origin);
 
@@ -507,7 +554,7 @@ const openclawWebhookReceiver = {
         await visitSchedulingService.createVisitRequest(lead.id, message);
       }
 
-      botResponse = BOT_MESSAGES.TRANSFERENCIA_HUMANA;
+      botResponse = getBotMessages().TRANSFERENCIA_HUMANA;
     } else {
       // ── conversationStateService: advance state ──
       const currentState = lead.conversation_state || "START";
