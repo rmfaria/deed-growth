@@ -738,14 +738,34 @@ const server = createServer(async (req, res) => {
       }
       const body = await readBody(req);
       const data = body.data || body;
+
+      // Ignore outbound messages (sent by us) to prevent loops
+      const fromMe = data?.key?.fromMe;
+      if (fromMe) {
+        return jsonResponse(res, 200, { status: "ignored", reason: "outbound message (fromMe)" });
+      }
+
+      // Ignore non-message events (status updates, receipts, etc.)
+      const event = body.event;
+      if (event && event !== "messages.upsert") {
+        return jsonResponse(res, 200, { status: "ignored", reason: `event: ${event}` });
+      }
+
       const remoteJid = data?.key?.remoteJid || "";
-      const phone = remoteJid.replace("@s.whatsapp.net", "").replace("@g.us", "");
+      // Ignore group messages
+      if (remoteJid.endsWith("@g.us")) {
+        return jsonResponse(res, 200, { status: "ignored", reason: "group message" });
+      }
+
+      const phone = remoteJid.replace("@s.whatsapp.net", "");
       const message = data?.message?.conversation || data?.message?.extendedTextMessage?.text || "";
       const pushName = data?.pushName || "Lead WhatsApp";
 
       if (!phone || !message) {
         return jsonResponse(res, 200, { status: "ignored", reason: "no text message" });
       }
+
+      log("webhookReceiver", "evolution inbound", { phone, pushName, event });
 
       const result = await openclawWebhookReceiver.process({
         phone, message, sender_name: pushName, origin: "evolution-api",
