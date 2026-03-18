@@ -22,6 +22,7 @@ const BotSettings = () => {
   const [businessHoursStart, setBusinessHoursStart] = useState("08:00");
   const [businessHoursEnd, setBusinessHoursEnd] = useState("18:00");
   const [autoHandoffHot, setAutoHandoffHot] = useState(true);
+  const [autoResetHours, setAutoResetHours] = useState(4);
   const [attendants, setAttendants] = useState<{ name: string; phone: string }[]>([{ name: "", phone: "" }]);
   const [saving, setSaving] = useState(false);
   const [engineStatus, setEngineStatus] = useState<any>(null);
@@ -54,6 +55,7 @@ const BotSettings = () => {
       if (config.business_hours_start) setBusinessHoursStart(config.business_hours_start as string);
       if (config.business_hours_end) setBusinessHoursEnd(config.business_hours_end as string);
       if (config.auto_handoff_hot !== undefined) setAutoHandoffHot(config.auto_handoff_hot as boolean);
+      if (config.auto_reset_hours !== undefined) setAutoResetHours(config.auto_reset_hours as number);
       if (config.attendants) setAttendants(config.attendants as { name: string; phone: string }[]);
     }
   }, [config]);
@@ -68,6 +70,7 @@ const BotSettings = () => {
       { key: 'business_hours_start', value: businessHoursStart },
       { key: 'business_hours_end', value: businessHoursEnd },
       { key: 'auto_handoff_hot', value: autoHandoffHot },
+      { key: 'auto_reset_hours', value: autoResetHours },
       { key: 'attendants', value: attendants.filter(a => a.name.trim() && a.phone.trim()) },
     ];
 
@@ -224,6 +227,24 @@ const BotSettings = () => {
               <p className="text-xs text-muted-foreground">Leads com score 51+ são transferidos para humano</p>
             </div>
             <Switch checked={autoHandoffHot} onCheckedChange={setAutoHandoffHot} />
+          </div>
+          <Separator />
+          <div>
+            <Label>Reinício automático de conversa por inatividade</Label>
+            <div className="flex items-center gap-3 mt-1.5">
+              <Input
+                type="number"
+                min={1}
+                max={168}
+                value={autoResetHours}
+                onChange={(e) => setAutoResetHours(parseInt(e.target.value) || 4)}
+                className="w-20"
+              />
+              <span className="text-sm text-muted-foreground">horas sem interação</span>
+            </div>
+            <p className="text-xs text-muted-foreground mt-1">
+              Leads sem mensagem há mais de {autoResetHours}h voltam automaticamente para o início do fluxo (START).
+            </p>
           </div>
           <Separator />
           <div className="grid grid-cols-2 gap-4">

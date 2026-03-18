@@ -953,4 +953,46 @@ server.listen(PORT, "0.0.0.0", () => {
   log("openclaw-mbc", `supabase: ${SUPABASE_URL ? "OK" : "NOT SET"}`);
   log("openclaw-mbc", `whatsapp: ${WHATSAPP_API_URL ? "OK" : "NOT SET"}`);
   log("openclaw-mbc", `orbit-core: ${ORBIT_CORE_URL ? "OK" : "NOT SET"}`);
+
+  // ── Auto-reset cron: resets stale conversations every 10 minutes ──
+  setInterval(async () => {
+    try {
+      const config = await loadBotConfig();
+      const hours = Number(config.auto_reset_hours) || 4;
+      const cutoff = new Date(Date.now() - hours * 3600_000).toISOString();
+
+      // Find leads that are NOT in START/ENCERRADO and last_message_at < cutoff
+      const url = `${SUPABASE_URL}/rest/v1/bot_leads?conversation_state=neq.START&conversation_state=neq.ENCERRADO&attendance_status=neq.encerrado&last_message_at=lt.${cutoff}&select=id,name,conversation_state,last_message_at`;
+      const headers = {
+        apikey: SUPABASE_SERVICE_ROLE_KEY,
+        Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+      };
+      const resp = await fetch(url, { headers });
+      const staleLeads = await resp.json();
+
+      if (!Array.isArray(staleLeads) || staleLeads.length === 0) return;
+
+      // Reset them
+      const resetUrl = `${SUPABASE_URL}/rest/v1/bot_leads?conversation_state=neq.START&conversation_state=neq.ENCERRADO&attendance_status=neq.encerrado&last_message_at=lt.${cutoff}`;
+      await fetch(resetUrl, {
+        method: "PATCH",
+        headers: { ...headers, "Content-Type": "application/json", Prefer: "return=minimal" },
+        body: JSON.stringify({
+          conversation_state: "START",
+          score: 0,
+          score_classification: "frio",
+          attendance_status: "bot",
+          human_handoff: false,
+          handoff_reason: null,
+        }),
+      });
+
+      log("autoReset", `reset ${staleLeads.length} stale leads (>${hours}h inactivity)`, {
+        count: staleLeads.length,
+        names: staleLeads.slice(0, 5).map(l => l.name),
+      });
+    } catch (err) {
+      log("autoReset", "error", { error: err.message });
+    }
+  }, 10 * 60_000); // check every 10 minutes
 });

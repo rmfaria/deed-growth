@@ -292,6 +292,23 @@ const BotLeads = () => {
                           onClick={() => handoffMutation.mutate({ leadId: lead.id, reason: "Transferência manual via lista" })}>
                           <UserCheck size={14} />
                         </Button>
+                        {lead.conversation_state !== "START" && (
+                          <Button variant="ghost" size="icon" className="h-8 w-8" title="Reiniciar conversa"
+                            onClick={async () => {
+                              await supabase.from("bot_leads").update({
+                                conversation_state: "START",
+                                score: 0,
+                                score_classification: "frio",
+                                attendance_status: "bot",
+                                human_handoff: false,
+                                handoff_reason: null,
+                              }).eq("id", lead.id);
+                              queryClient.invalidateQueries({ queryKey: ["bot-leads"] });
+                              toast.success(`Conversa de ${lead.name} reiniciada.`);
+                            }}>
+                            <RotateCcw size={14} className="text-blue-500" />
+                          </Button>
+                        )}
                         <Button variant="ghost" size="icon" className="h-8 w-8" title="Mover para lixeira"
                           onClick={() => setDeletingLead({ id: lead.id, name: lead.name })}>
                           <Trash2 size={14} className="text-destructive" />
