@@ -45,10 +45,32 @@ const SCRIPT_OPTIONS = [
   { key: "transfer_message", label: "Transferência para Humano" },
 ] as const;
 
+async function notifyAttendants(
+  attendants: { name: string; phone: string }[],
+  leadName: string,
+  leadPhone: string,
+  leadOrigin: string,
+) {
+  const waLink = `https://wa.me/${leadPhone.replace(/[^0-9]/g, "")}`;
+  for (const att of attendants) {
+    const msg =
+      `🔔 *Transferência de Lead*\n\n` +
+      `*Cliente:* ${leadName}\n` +
+      `*Telefone:* ${leadPhone}\n` +
+      `*Campanha:* ${leadOrigin}\n\n` +
+      `👉 Abrir conversa: ${waLink}`;
+    const attPhone = att.phone.replace(/[^0-9]/g, "");
+    if (attPhone) {
+      await sendText(attPhone, msg).catch(() => {});
+    }
+  }
+}
+
 const BotSend = () => {
   const { data: leads = [] } = useBotLeads();
   const { data: botConfig } = useBotConfig();
   const [selectedLeadId, setSelectedLeadId] = useState<string>("");
+  const [selectedScript, setSelectedScript] = useState<string>("");
   const [manualPhone, setManualPhone] = useState("");
   const [message, setMessage] = useState("");
   const [mediaUrl, setMediaUrl] = useState("");
@@ -70,7 +92,22 @@ const BotSend = () => {
       if (res.ok || res.sent) {
         toast.success(`Mensagem enviada para ${phone}`);
         setLastResult({ ok: true, phone });
+
+        // If transfer script was used, notify attendants
+        if (selectedScript === "transfer_message") {
+          const attendants = (botConfig?.attendants as { name: string; phone: string }[]) || [];
+          if (attendants.length > 0) {
+            const leadName = selectedLead?.name || "Contato manual";
+            const leadOrigin = selectedLead?.origin || "Sem campanha";
+            await notifyAttendants(attendants, leadName, cleanPhone, leadOrigin);
+            toast.success(`${attendants.length} atendente(s) notificado(s)`);
+          } else {
+            toast.info("Nenhum atendente configurado para notificar.");
+          }
+        }
+
         setMessage("");
+        setSelectedScript("");
       } else {
         toast.error(`Erro: ${res.error || "falha no envio"}`);
         setLastResult({ ok: false, phone });
@@ -182,7 +219,9 @@ const BotSend = () => {
               <div>
                 <Label>Script de Vendas</Label>
                 <Select
+                  value={selectedScript}
                   onValueChange={(key) => {
+                    setSelectedScript(key);
                     const raw = botConfig?.[key] as string | undefined;
                     if (!raw) {
                       toast.info("Script não configurado. Acesse Configurações do Bot para definir.");
@@ -207,6 +246,13 @@ const BotSend = () => {
                   </SelectContent>
                 </Select>
                 <p className="text-xs text-muted-foreground mt-1">Preenche a mensagem com o texto configurado em Configurações</p>
+                {selectedScript === "transfer_message" && (
+                  <div className="mt-2 p-2.5 rounded-lg bg-amber-500/10 border border-amber-500/30">
+                    <p className="text-xs text-amber-600 font-medium">
+                      Ao enviar, os atendentes configurados serão notificados via WhatsApp com o contato deste lead.
+                    </p>
+                  </div>
+                )}
               </div>
               <div>
                 <Label>Mensagem</Label>

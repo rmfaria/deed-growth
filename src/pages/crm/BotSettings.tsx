@@ -7,7 +7,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
 import { Separator } from "@/components/ui/separator";
 import { Badge } from "@/components/ui/badge";
-import { Save, Loader2, RefreshCw, CheckCircle2, XCircle, Circle } from "lucide-react";
+import { Save, Loader2, RefreshCw, CheckCircle2, XCircle, Circle, Plus, Trash2 } from "lucide-react";
 import { SCORE_RULES } from "@/services/bot/types";
 import { useBotConfig } from "@/hooks/useBotData";
 import { supabase } from "@/integrations/supabase/client";
@@ -22,6 +22,7 @@ const BotSettings = () => {
   const [businessHoursStart, setBusinessHoursStart] = useState("08:00");
   const [businessHoursEnd, setBusinessHoursEnd] = useState("18:00");
   const [autoHandoffHot, setAutoHandoffHot] = useState(true);
+  const [attendants, setAttendants] = useState<{ name: string; phone: string }[]>([{ name: "", phone: "" }]);
   const [saving, setSaving] = useState(false);
   const [engineStatus, setEngineStatus] = useState<any>(null);
   const [engineLoading, setEngineLoading] = useState(false);
@@ -53,6 +54,7 @@ const BotSettings = () => {
       if (config.business_hours_start) setBusinessHoursStart(config.business_hours_start as string);
       if (config.business_hours_end) setBusinessHoursEnd(config.business_hours_end as string);
       if (config.auto_handoff_hot !== undefined) setAutoHandoffHot(config.auto_handoff_hot as boolean);
+      if (config.attendants) setAttendants(config.attendants as { name: string; phone: string }[]);
     }
   }, [config]);
 
@@ -66,6 +68,7 @@ const BotSettings = () => {
       { key: 'business_hours_start', value: businessHoursStart },
       { key: 'business_hours_end', value: businessHoursEnd },
       { key: 'auto_handoff_hot', value: autoHandoffHot },
+      { key: 'attendants', value: attendants.filter(a => a.name.trim() && a.phone.trim()) },
     ];
 
     try {
@@ -133,6 +136,59 @@ const BotSettings = () => {
             <Label>Mensagem de Transferência para Humano</Label>
             <Textarea value={transferMsg} onChange={(e) => setTransferMsg(e.target.value)} className="mt-1.5" rows={2} />
           </div>
+        </CardContent>
+      </Card>
+
+      <Card className="bg-card border-border">
+        <CardHeader>
+          <CardTitle className="font-display text-base">Atendentes</CardTitle>
+          <CardDescription>Consultores que recebem notificação na transferência para humano</CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          {attendants.map((att, i) => (
+            <div key={i} className="flex items-center gap-2">
+              <Input
+                placeholder="Nome"
+                value={att.name}
+                onChange={(e) => {
+                  const next = [...attendants];
+                  next[i] = { ...next[i], name: e.target.value };
+                  setAttendants(next);
+                }}
+                className="flex-1"
+              />
+              <Input
+                placeholder="5531999999999"
+                value={att.phone}
+                onChange={(e) => {
+                  const next = [...attendants];
+                  next[i] = { ...next[i], phone: e.target.value };
+                  setAttendants(next);
+                }}
+                className="flex-1"
+              />
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-9 w-9 shrink-0"
+                disabled={attendants.length <= 1}
+                onClick={() => setAttendants(attendants.filter((_, j) => j !== i))}
+              >
+                <Trash2 size={14} className="text-destructive" />
+              </Button>
+            </div>
+          ))}
+          <Button
+            variant="outline"
+            size="sm"
+            className="gap-2"
+            onClick={() => setAttendants([...attendants, { name: "", phone: "" }])}
+          >
+            <Plus size={14} /> Adicionar Atendente
+          </Button>
+          <p className="text-xs text-muted-foreground">
+            Ao transferir um lead, todos os atendentes recebem uma mensagem no WhatsApp com o contato do cliente.
+          </p>
         </CardContent>
       </Card>
 
