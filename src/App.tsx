@@ -21,6 +21,12 @@ import CrmReports from "./pages/crm/CrmReports";
 import CrmIntegrations from "./pages/crm/CrmIntegrations";
 import CrmWhatsApp from "./pages/crm/CrmWhatsApp";
 import CrmSettings from "./pages/crm/CrmSettings";
+import BotDashboard from "./pages/crm/BotDashboard";
+import BotLeads from "./pages/crm/BotLeads";
+import BotLeadDetail from "./pages/crm/BotLeadDetail";
+import BotFlow from "./pages/crm/BotFlow";
+import BotMaterials from "./pages/crm/BotMaterials";
+import BotSettings from "./pages/crm/BotSettings";
 import { CrmLayout } from "./components/crm/CrmLayout";
 
 const queryClient = new QueryClient();
@@ -54,6 +60,14 @@ const App = () => (
             <Route path="/crm/integrations" element={<CrmLayout><CrmIntegrations /></CrmLayout>} />
             <Route path="/crm/whatsapp" element={<CrmLayout><CrmWhatsApp /></CrmLayout>} />
             <Route path="/crm/settings" element={<CrmLayout><CrmSettings /></CrmLayout>} />
+
+            {/* Bot MBC routes */}
+            <Route path="/crm/bot" element={<CrmLayout><BotDashboard /></CrmLayout>} />
+            <Route path="/crm/bot/leads" element={<CrmLayout><BotLeads /></CrmLayout>} />
+            <Route path="/crm/bot/leads/:id" element={<CrmLayout><BotLeadDetail /></CrmLayout>} />
+            <Route path="/crm/bot/flow" element={<CrmLayout><BotFlow /></CrmLayout>} />
+            <Route path="/crm/bot/materials" element={<CrmLayout><BotMaterials /></CrmLayout>} />
+            <Route path="/crm/bot/settings" element={<CrmLayout><BotSettings /></CrmLayout>} />
 
             <Route path="*" element={<NotFound />} />
           </Routes>
