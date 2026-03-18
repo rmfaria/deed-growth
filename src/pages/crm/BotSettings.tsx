@@ -55,8 +55,11 @@ const BotSettings = () => {
       if (config.business_hours_start) setBusinessHoursStart(config.business_hours_start as string);
       if (config.business_hours_end) setBusinessHoursEnd(config.business_hours_end as string);
       if (config.auto_handoff_hot !== undefined) setAutoHandoffHot(config.auto_handoff_hot as boolean);
-      if (config.auto_reset_hours !== undefined) setAutoResetHours(config.auto_reset_hours as number);
-      if (config.attendants) setAttendants(config.attendants as { name: string; phone: string }[]);
+      if (config.auto_reset_hours !== undefined) setAutoResetHours(Number(config.auto_reset_hours) || 4);
+      if (config.attendants) {
+        const atts = config.attendants as { name: string; phone: string }[];
+        setAttendants(atts.length > 0 ? atts : [{ name: "", phone: "" }]);
+      }
     }
   }, [config]);
 
