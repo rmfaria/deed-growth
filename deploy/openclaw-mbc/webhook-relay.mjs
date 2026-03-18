@@ -114,6 +114,15 @@ const supabase = {
   async update(table, filters, body) {
     return this.query(table, "UPDATE", { filters, body });
   },
+  async selectManyRaw(table, queryString) {
+    const url = `${SUPABASE_URL}/rest/v1/${table}?${queryString}`;
+    const headers = {
+      apikey: SUPABASE_SERVICE_ROLE_KEY,
+      Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+    };
+    const r = await fetchJSON(url, { method: "GET", headers });
+    return Array.isArray(r.data) ? r.data : [];
+  },
 };
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -213,6 +222,315 @@ const conversationStateService = {
         : msgs.QUALIFICACAO_SECUNDARIA_INVESTIMENTO;
     }
     return msgs[state] || msgs.CONVERSAO;
+  },
+};
+
+// ═══════════════════════════════════════════════════════════════════════════
+// LLM CONVERSATION SERVICE — AI-powered conversation
+// ═══════════════════════════════════════════════════════════════════════════
+
+const DEFAULT_SYSTEM_PROMPT = `Voce e {persona}, corretor responsavel pelo Metropolitan Business Center (MBC).
+
+## REGRAS DE COMPORTAMENTO
+- Responda SEMPRE em portugues brasileiro, informal mas profissional
+- Seja conciso: maximo 3 paragrafos curtos
+- NUNCA invente informacoes que nao estejam neste prompt
+- Se nao souber algo, diga que vai verificar com a equipe
+- Nao discuta politica, religiao ou temas fora do empreendimento
+- Nao repita a mesma mensagem anterior — varie suas respostas
+- Se o lead disser "sim", "pode", "ok", "claro" entenda como afirmacao a sua ultima pergunta
+- Conduza naturalmente para envio de material, visita ou falar com consultor
+
+## SOBRE O EMPREENDIMENTO
+- Nome: Metropolitan Business Center (MBC)
+- Tipo: Condominio empresarial
+- Localizacao: margens da MG-10, a 3km do Aeroporto de Confins/MG
+- Lotes a partir de 1.000 m2
+- Infraestrutura: ruas 10m com asfalto para carretas, rotatorias para manobra, portaria com seguranca 24h, energia Cemig, agua Copasa e internet
+- Regiao em forte expansao logistica
+
+## CONDICOES COMERCIAIS
+- Preco base: R$ 530.000
+- Entrada: 20%
+- Saldo: ate 24 parcelas (tabela Price, 0,99% a.m.)
+- Condominio: aproximadamente R$ 500/mes
+
+## PERFIS DE CLIENTE
+- Empresa: quer instalar operacao (galpao, centro de distribuicao, sede, escritorio, deposito)
+- Investidor: busca valorizacao patrimonial ou renda com construcao de galpao
+
+## ACOES DISPONIVEIS
+Quando o lead demonstrar intencao clara, inclua UMA acao no JSON:
+- "send_material": lead pediu ou aceitou receber material, apresentacao, book, brochura, video
+- "send_planta": lead pediu planta especificamente
+- "schedule_visit": lead quer visitar, conhecer, ir ate la, agendar visita
+- "transfer_human": lead quer proposta personalizada, negociar desconto, condicao especial, falar com consultor/atendente
+
+## FORMATO DE RESPOSTA (OBRIGATORIO)
+Responda SEMPRE em JSON valido, nada mais:
+{"text": "sua resposta aqui", "action": null}
+ou com acao:
+{"text": "Perfeito! Estou enviando o material completo para voce.", "action": "send_material"}`;
+
+const LLM_PROVIDERS = {
+  openai:    { endpoint: "https://api.openai.com/v1/chat/completions",  defaultModel: "gpt-4o-mini",   format: "openai" },
+  anthropic: { endpoint: "https://api.anthropic.com/v1/messages",       defaultModel: "claude-sonnet-4-20250514", format: "anthropic" },
+  google:    { endpoint: "https://generativelanguage.googleapis.com/v1beta/models", defaultModel: "gemini-2.0-flash", format: "google" },
+  xai:       { endpoint: "https://api.x.ai/v1/chat/completions",       defaultModel: "grok-3-mini",   format: "openai" },
+};
+
+const guardrails = {
+  _recentResponses: new Map(), // leadId → [last 3 responses]
+  _lastCallTime: new Map(),    // leadId → timestamp
+  _failCount: new Map(),       // leadId → consecutive failures
+
+  checkRateLimit(leadId) {
+    const last = this._lastCallTime.get(leadId) || 0;
+    if (Date.now() - last < 2000) return true; // too soon
+    this._lastCallTime.set(leadId, Date.now());
+    return false;
+  },
+
+  detectLoop(leadId, newResponse) {
+    const recent = this._recentResponses.get(leadId) || [];
+    const snippet = (newResponse || "").slice(0, 80).toLowerCase();
+    const isLoop = recent.some((r) => r.slice(0, 80).toLowerCase() === snippet);
+    recent.push(newResponse || "");
+    if (recent.length > 3) recent.shift();
+    this._recentResponses.set(leadId, recent);
+    return isLoop;
+  },
+
+  truncateAtSentence(text, maxLen) {
+    if (!text || text.length <= maxLen) return text;
+    const truncated = text.slice(0, maxLen);
+    const lastPeriod = Math.max(truncated.lastIndexOf("."), truncated.lastIndexOf("!"), truncated.lastIndexOf("?"));
+    return lastPeriod > maxLen * 0.5 ? truncated.slice(0, lastPeriod + 1) : truncated;
+  },
+
+  parseResponse(raw) {
+    if (!raw) return { text: null, action: null };
+    // Try direct JSON parse
+    try {
+      const parsed = JSON.parse(raw);
+      if (parsed.text) return { text: parsed.text, action: parsed.action || null };
+    } catch {}
+    // Try extracting JSON from markdown code blocks
+    const jsonMatch = raw.match(/```(?:json)?\s*(\{[\s\S]*?\})\s*```/);
+    if (jsonMatch) {
+      try {
+        const parsed = JSON.parse(jsonMatch[1]);
+        if (parsed.text) return { text: parsed.text, action: parsed.action || null };
+      } catch {}
+    }
+    // Try finding any JSON object in the text
+    const braceMatch = raw.match(/\{[^{}]*"text"\s*:\s*"[^"]*"[^{}]*\}/);
+    if (braceMatch) {
+      try {
+        const parsed = JSON.parse(braceMatch[0]);
+        if (parsed.text) return { text: parsed.text, action: parsed.action || null };
+      } catch {}
+    }
+    // Fallback: use raw text, no action
+    return { text: raw.replace(/```json|```/g, "").trim(), action: null };
+  },
+
+  recordFailure(leadId) {
+    const count = (this._failCount.get(leadId) || 0) + 1;
+    this._failCount.set(leadId, count);
+    return count >= 3; // disable LLM for this lead after 3 failures
+  },
+
+  recordSuccess(leadId) {
+    this._failCount.delete(leadId);
+  },
+
+  isDisabled(leadId) {
+    return (this._failCount.get(leadId) || 0) >= 3;
+  },
+};
+
+const llmConversationService = {
+  async loadHistory(leadId, maxMessages) {
+    const qs = `lead_id=eq.${leadId}&order=created_at.desc&limit=${maxMessages}&select=direction,content,created_at`;
+    const rows = await supabase.selectManyRaw("bot_messages", qs);
+    return rows.reverse().map((r) => ({
+      role: r.direction === "inbound" ? "user" : "assistant",
+      content: r.content,
+    }));
+  },
+
+  buildSystemPrompt(lead, template) {
+    const persona = getConfig("persona", "Rogério");
+    let prompt = (template || DEFAULT_SYSTEM_PROMPT).replace(/\{persona\}/g, persona);
+    // Inject lead context
+    prompt += `\n\n## CONTEXTO DO LEAD ATUAL\n`;
+    prompt += `- Nome: ${lead.name || "desconhecido"}\n`;
+    if (lead.profile_type && lead.profile_type !== "indefinido") prompt += `- Perfil: ${lead.profile_type}\n`;
+    if (lead.objective) prompt += `- Objetivo: ${lead.objective}\n`;
+    if (lead.desired_area) prompt += `- Area desejada: ${lead.desired_area}\n`;
+    prompt += `- Score: ${lead.score} (${lead.score_classification})\n`;
+    return prompt;
+  },
+
+  async callOpenAIFormat(endpoint, apiKey, model, systemPrompt, history, temperature, extraHeaders) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 10000);
+    try {
+      const resp = await fetch(endpoint, {
+        method: "POST",
+        signal: controller.signal,
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${apiKey}`,
+          ...extraHeaders,
+        },
+        body: JSON.stringify({
+          model,
+          messages: [{ role: "system", content: systemPrompt }, ...history],
+          temperature,
+          max_tokens: 800,
+        }),
+      });
+      const data = await resp.json();
+      if (!resp.ok) throw new Error(data.error?.message || `API ${resp.status}`);
+      return data.choices?.[0]?.message?.content || "";
+    } finally {
+      clearTimeout(timeout);
+    }
+  },
+
+  async callAnthropic(apiKey, model, systemPrompt, history, temperature) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 10000);
+    try {
+      const resp = await fetch("https://api.anthropic.com/v1/messages", {
+        method: "POST",
+        signal: controller.signal,
+        headers: {
+          "Content-Type": "application/json",
+          "x-api-key": apiKey,
+          "anthropic-version": "2023-06-01",
+        },
+        body: JSON.stringify({
+          model,
+          system: systemPrompt,
+          messages: history,
+          max_tokens: 800,
+          temperature,
+        }),
+      });
+      const data = await resp.json();
+      if (!resp.ok) throw new Error(data.error?.message || `API ${resp.status}`);
+      return data.content?.[0]?.text || "";
+    } finally {
+      clearTimeout(timeout);
+    }
+  },
+
+  async callGoogle(apiKey, model, systemPrompt, history, temperature) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 10000);
+    try {
+      const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
+      const contents = history.map((m) => ({
+        role: m.role === "assistant" ? "model" : "user",
+        parts: [{ text: m.content }],
+      }));
+      const resp = await fetch(url, {
+        method: "POST",
+        signal: controller.signal,
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          system_instruction: { parts: [{ text: systemPrompt }] },
+          contents,
+          generationConfig: { temperature, maxOutputTokens: 800 },
+        }),
+      });
+      const data = await resp.json();
+      if (!resp.ok) throw new Error(data.error?.message || `API ${resp.status}`);
+      return data.candidates?.[0]?.content?.parts?.[0]?.text || "";
+    } finally {
+      clearTimeout(timeout);
+    }
+  },
+
+  async generate(leadId, lead, message) {
+    const provider = getConfig("llm_provider", "openai");
+    const apiKey = getConfig("llm_api_key", "");
+    const providerConfig = LLM_PROVIDERS[provider] || LLM_PROVIDERS.openai;
+    const model = getConfig("llm_model", "") || providerConfig.defaultModel;
+    const temperature = Number(getConfig("llm_temperature", 0.7));
+    const maxHistory = Number(getConfig("llm_max_history", 20));
+    const maxLen = Number(getConfig("llm_max_response_length", 500));
+    const systemPromptTemplate = getConfig("llm_system_prompt", DEFAULT_SYSTEM_PROMPT);
+
+    if (!apiKey) throw new Error("LLM API key not configured");
+
+    // Rate limit
+    if (guardrails.checkRateLimit(leadId)) {
+      throw new Error("Rate limited");
+    }
+
+    // Check if LLM disabled for this lead (too many failures)
+    if (guardrails.isDisabled(leadId)) {
+      throw new Error("LLM disabled for this lead (consecutive failures)");
+    }
+
+    // Load conversation history
+    const history = await this.loadHistory(leadId, maxHistory);
+    // Add current message (not yet saved when this runs — it IS saved before this call in process())
+    // Actually it IS already saved, so it's in the history. No need to add again.
+
+    // Build system prompt with lead context
+    const systemPrompt = this.buildSystemPrompt(lead, systemPromptTemplate);
+
+    // Call provider
+    let rawResponse;
+    const format = providerConfig.format;
+
+    if (format === "openai") {
+      rawResponse = await this.callOpenAIFormat(
+        providerConfig.endpoint, apiKey, model, systemPrompt, history, temperature,
+        provider === "xai" ? {} : {},
+      );
+    } else if (format === "anthropic") {
+      rawResponse = await this.callAnthropic(apiKey, model, systemPrompt, history, temperature);
+    } else if (format === "google") {
+      rawResponse = await this.callGoogle(apiKey, model, systemPrompt, history, temperature);
+    } else {
+      throw new Error(`Unknown provider format: ${format}`);
+    }
+
+    log("llmConversation", "raw response", { provider, model, raw: rawResponse?.slice(0, 200) });
+
+    // Parse structured response
+    const parsed = guardrails.parseResponse(rawResponse);
+
+    if (!parsed.text) {
+      guardrails.recordFailure(leadId);
+      throw new Error("Empty LLM response");
+    }
+
+    // Truncate if needed
+    parsed.text = guardrails.truncateAtSentence(parsed.text, maxLen);
+
+    // Loop detection
+    if (guardrails.detectLoop(leadId, parsed.text)) {
+      guardrails.recordFailure(leadId);
+      throw new Error("Loop detected — same response repeated");
+    }
+
+    // Validate action
+    const validActions = ["send_material", "send_planta", "schedule_visit", "transfer_human", null];
+    if (!validActions.includes(parsed.action)) {
+      parsed.action = null;
+    }
+
+    guardrails.recordSuccess(leadId);
+    log("llmConversation", "generated", { provider, text: parsed.text.slice(0, 100), action: parsed.action });
+
+    return parsed;
   },
 };
 
@@ -560,11 +878,13 @@ const openclawWebhookReceiver = {
       updates.construction_interest = true;
     }
 
-    // ── handoffRouterService: check if needs human ──
+    // ── Determine response: LLM or state machine ──
     const handoff = handoffRouterService.needsHandoff(message, newScore);
     let botResponse;
+    const llmEnabled = getConfig("llm_enabled", false) && getConfig("llm_api_key", "");
 
     if (handoff.needed) {
+      // Forced handoff (keyword or score threshold) — same for both modes
       updates.human_handoff = true;
       updates.handoff_reason = handoff.reason;
       updates.attendance_status = "aguardando_humano";
@@ -572,29 +892,63 @@ const openclawWebhookReceiver = {
 
       await handoffRouterService.createHandoff(lead.id, handoff.reason);
 
-      // ── visitSchedulingService: check visit intent ──
       if (visitSchedulingService.detectVisitIntent(message)) {
         updates.visit_interest = true;
         await visitSchedulingService.createVisitRequest(lead.id, message);
       }
 
       botResponse = getBotMessages().TRANSFERENCIA_HUMANA;
-    } else {
-      // ── conversationStateService: advance state ──
+    } else if (llmEnabled) {
+      // ══════ LLM MODE ══════
+      try {
+        const llmResult = await llmConversationService.generate(lead.id, lead, message);
+        botResponse = llmResult.text;
+
+        // Process LLM actions
+        if (llmResult.action === "send_material") {
+          updates._dispatchMaterialTypes = ["apresentacao", "pdf", "video"];
+          updates.conversation_state = "POS_CONVERSAO";
+        } else if (llmResult.action === "send_planta") {
+          updates._dispatchMaterialTypes = ["planta"];
+          updates.conversation_state = "POS_CONVERSAO";
+        } else if (llmResult.action === "schedule_visit") {
+          updates.visit_interest = true;
+          updates.human_handoff = true;
+          updates.handoff_reason = "IA: lead solicitou visita";
+          updates.attendance_status = "aguardando_humano";
+          updates.conversation_state = "TRANSFERENCIA_HUMANA";
+          await visitSchedulingService.createVisitRequest(lead.id, message);
+          await handoffRouterService.createHandoff(lead.id, "IA: lead solicitou visita");
+        } else if (llmResult.action === "transfer_human") {
+          updates.human_handoff = true;
+          updates.handoff_reason = "IA: lead pediu atendimento humano";
+          updates.attendance_status = "aguardando_humano";
+          updates.conversation_state = "TRANSFERENCIA_HUMANA";
+          await handoffRouterService.createHandoff(lead.id, "IA: lead pediu atendimento humano");
+        } else {
+          updates.conversation_state = "LLM_ACTIVE";
+        }
+
+        log("llmConversation", "success", { leadId: lead.id, action: llmResult.action });
+      } catch (llmErr) {
+        // ══════ LLM FALLBACK → STATE MACHINE ══════
+        log("llmConversation", "fallback to state machine", { error: llmErr.message });
+        botResponse = null; // will be set by state machine below
+      }
+    }
+
+    // ══════ STATE MACHINE (default or LLM fallback) ══════
+    if (!botResponse && !handoff.needed) {
       const currentState = lead.conversation_state || "START";
       const lower = message.toLowerCase();
 
-      // Special handling for CONVERSAO and POS_CONVERSAO states
-      if (currentState === "CONVERSAO" || currentState === "POS_CONVERSAO") {
+      if (currentState === "CONVERSAO" || currentState === "POS_CONVERSAO" || currentState === "LLM_ACTIVE") {
         const trimmed = lower.trim();
-
-        // Detect numbered menu choices
         const isChoice1 = /^1$|^1️⃣/.test(trimmed);
         const isChoice2 = /^2$|^2️⃣/.test(trimmed);
         const isChoice3 = /^3$|^3️⃣/.test(trimmed);
         const isChoice4 = /^4$|^4️⃣/.test(trimmed);
 
-        // Detect intent from keywords + numbered choices
         const wantsMaterial = isChoice1 || /material|sim|pode|enviar|manda|quero|ok|claro|por favor|apresentação|book|brochura/i.test(lower);
         const wantsPlanta = isChoice2 || /planta/i.test(lower);
         const wantsVisita = isChoice3 || /visita|conhecer|ir até|ver pessoalmente|agendar/i.test(lower);
@@ -602,7 +956,6 @@ const openclawWebhookReceiver = {
         const wantsProposal = /proposta|orçamento|simulação/i.test(lower);
 
         if (wantsVisita || wantsProposal || wantsHuman) {
-          // High-intent → handoff to human
           const reason = wantsVisita ? "Lead solicitou visita" : wantsProposal ? "Lead solicitou proposta" : "Lead pediu atendimento humano";
           updates.human_handoff = true;
           updates.handoff_reason = reason;
@@ -615,7 +968,6 @@ const openclawWebhookReceiver = {
           await handoffRouterService.createHandoff(lead.id, reason);
           botResponse = getBotMessages().TRANSFERENCIA_HUMANA;
         } else if (wantsMaterial || wantsPlanta) {
-          // Send materials — determine types explicitly
           const materialTypes = [];
           if (wantsPlanta) materialTypes.push("planta");
           if (wantsMaterial) materialTypes.push("apresentacao", "pdf", "video");
@@ -623,16 +975,12 @@ const openclawWebhookReceiver = {
           updates.conversation_state = "POS_CONVERSAO";
           botResponse = "Perfeito! Estou enviando o material para você. Qualquer dúvida, estou à disposição.";
         } else {
-          // Unrecognized input — show clear menu
           updates.conversation_state = "CONVERSAO";
           botResponse = BOT_MESSAGES_STATIC.CONVERSAO;
         }
       } else {
-        // ── General state advance ──
         const isQuestion = /\?|como assim|não entendi|o que é|qual|pode explicar|me explica|como funciona/i.test(lower);
-
         if (isQuestion && currentState !== "START") {
-          // Don't advance — repeat current response
           updates.conversation_state = currentState;
           const profile = updates.profile_type || lead.profile_type;
           botResponse = conversationStateService.getBotResponse(currentState, profile);

@@ -5,12 +5,20 @@ import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Separator } from "@/components/ui/separator";
 import { Badge } from "@/components/ui/badge";
-import { Save, Loader2, RefreshCw, CheckCircle2, XCircle, Circle, Plus, Trash2 } from "lucide-react";
+import { Save, Loader2, RefreshCw, CheckCircle2, XCircle, Circle, Plus, Trash2, Bot, RotateCcw } from "lucide-react";
 import { SCORE_RULES } from "@/services/bot/types";
 import { useBotConfig } from "@/hooks/useBotData";
 import { toast } from "sonner";
+
+const PROVIDER_DEFAULTS: Record<string, { label: string; model: string; hint: string }> = {
+  openai:    { label: "OpenAI",         model: "gpt-4o-mini",   hint: "gpt-4o, gpt-4o-mini, gpt-4-turbo" },
+  anthropic: { label: "Anthropic",      model: "claude-sonnet-4-20250514", hint: "claude-sonnet-4-20250514, claude-haiku-4-5-20251001" },
+  google:    { label: "Google Gemini",  model: "gemini-2.0-flash",     hint: "gemini-2.0-flash, gemini-1.5-pro" },
+  xai:       { label: "xAI Grok",      model: "grok-3-mini",          hint: "grok-3-mini, grok-3" },
+};
 
 const BotSettings = () => {
   const { data: config, isLoading } = useBotConfig();
@@ -22,6 +30,14 @@ const BotSettings = () => {
   const [businessHoursEnd, setBusinessHoursEnd] = useState("18:00");
   const [autoHandoffHot, setAutoHandoffHot] = useState(true);
   const [autoResetHours, setAutoResetHours] = useState(4);
+  const [llmEnabled, setLlmEnabled] = useState(false);
+  const [llmProvider, setLlmProvider] = useState("openai");
+  const [llmApiKey, setLlmApiKey] = useState("");
+  const [llmModel, setLlmModel] = useState("");
+  const [llmSystemPrompt, setLlmSystemPrompt] = useState("");
+  const [llmMaxHistory, setLlmMaxHistory] = useState(20);
+  const [llmMaxResponseLength, setLlmMaxResponseLength] = useState(500);
+  const [llmTemperature, setLlmTemperature] = useState(0.7);
   const [attendants, setAttendants] = useState<{ name: string; phone: string }[]>([{ name: "", phone: "" }]);
   const [saving, setSaving] = useState(false);
   const [engineStatus, setEngineStatus] = useState<any>(null);
@@ -55,6 +71,14 @@ const BotSettings = () => {
       if (config.business_hours_end) setBusinessHoursEnd(config.business_hours_end as string);
       if (config.auto_handoff_hot !== undefined) setAutoHandoffHot(config.auto_handoff_hot as boolean);
       if (config.auto_reset_hours !== undefined) setAutoResetHours(Number(config.auto_reset_hours) || 4);
+      if (config.llm_enabled !== undefined) setLlmEnabled(!!config.llm_enabled);
+      if (config.llm_provider) setLlmProvider(config.llm_provider as string);
+      if (config.llm_api_key) setLlmApiKey(config.llm_api_key as string);
+      if (config.llm_model) setLlmModel(config.llm_model as string);
+      if (config.llm_system_prompt) setLlmSystemPrompt(config.llm_system_prompt as string);
+      if (config.llm_max_history !== undefined) setLlmMaxHistory(Number(config.llm_max_history) || 20);
+      if (config.llm_max_response_length !== undefined) setLlmMaxResponseLength(Number(config.llm_max_response_length) || 500);
+      if (config.llm_temperature !== undefined) setLlmTemperature(Number(config.llm_temperature) || 0.7);
       if (config.attendants) {
         const atts = config.attendants as { name: string; phone: string }[];
         setAttendants(atts.length > 0 ? atts : [{ name: "", phone: "" }]);
@@ -73,6 +97,14 @@ const BotSettings = () => {
       { key: 'business_hours_end', value: businessHoursEnd },
       { key: 'auto_handoff_hot', value: autoHandoffHot },
       { key: 'auto_reset_hours', value: autoResetHours },
+      { key: 'llm_enabled', value: llmEnabled },
+      { key: 'llm_provider', value: llmProvider },
+      { key: 'llm_api_key', value: llmApiKey },
+      { key: 'llm_model', value: llmModel || PROVIDER_DEFAULTS[llmProvider]?.model || "" },
+      { key: 'llm_system_prompt', value: llmSystemPrompt },
+      { key: 'llm_max_history', value: llmMaxHistory },
+      { key: 'llm_max_response_length', value: llmMaxResponseLength },
+      { key: 'llm_temperature', value: llmTemperature },
       { key: 'attendants', value: attendants.filter(a => a.name.trim() && a.phone.trim()) },
     ];
 
@@ -143,6 +175,128 @@ const BotSettings = () => {
             <Textarea value={transferMsg} onChange={(e) => setTransferMsg(e.target.value)} className="mt-1.5" rows={2} />
           </div>
         </CardContent>
+      </Card>
+
+      <Card className={`bg-card border-border ${llmEnabled ? "border-primary/40" : ""}`}>
+        <CardHeader>
+          <div className="flex items-center justify-between">
+            <div>
+              <CardTitle className="font-display text-base flex items-center gap-2">
+                <Bot size={18} className="text-primary" />
+                Inteligência Artificial
+              </CardTitle>
+              <CardDescription>Substitui o fluxo fixo por conversa natural com IA</CardDescription>
+            </div>
+            <Switch checked={llmEnabled} onCheckedChange={setLlmEnabled} />
+          </div>
+        </CardHeader>
+        {llmEnabled && (
+          <CardContent className="space-y-4">
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <Label>Provedor</Label>
+                <Select value={llmProvider} onValueChange={(v) => { setLlmProvider(v); setLlmModel(""); }}>
+                  <SelectTrigger className="mt-1.5"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    {Object.entries(PROVIDER_DEFAULTS).map(([key, p]) => (
+                      <SelectItem key={key} value={key}>{p.label}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div>
+                <Label>Modelo</Label>
+                <Input
+                  value={llmModel}
+                  onChange={(e) => setLlmModel(e.target.value)}
+                  placeholder={PROVIDER_DEFAULTS[llmProvider]?.model || ""}
+                  className="mt-1.5"
+                />
+                <p className="text-xs text-muted-foreground mt-1">{PROVIDER_DEFAULTS[llmProvider]?.hint}</p>
+              </div>
+            </div>
+            <div>
+              <Label>API Key</Label>
+              <Input
+                type="password"
+                value={llmApiKey}
+                onChange={(e) => setLlmApiKey(e.target.value)}
+                placeholder="sk-..."
+                className="mt-1.5 font-mono"
+              />
+            </div>
+            <Separator />
+            <div>
+              <div className="flex items-center justify-between mb-1.5">
+                <Label>System Prompt</Label>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="gap-1.5 text-xs h-7"
+                  onClick={() => setLlmSystemPrompt("")}
+                >
+                  <RotateCcw size={12} /> Restaurar padrão
+                </Button>
+              </div>
+              <Textarea
+                value={llmSystemPrompt}
+                onChange={(e) => setLlmSystemPrompt(e.target.value)}
+                placeholder="Deixe vazio para usar o prompt padrão com regras do MBC..."
+                className="mt-1 font-mono text-xs min-h-[200px]"
+                rows={12}
+              />
+              <p className="text-xs text-muted-foreground mt-1">
+                Use {'{persona}'} para o nome do corretor. Deixe vazio para usar o prompt padrão.
+              </p>
+            </div>
+            <Separator />
+            <div className="grid grid-cols-3 gap-4">
+              <div>
+                <Label>Histórico</Label>
+                <Input
+                  type="number"
+                  min={5}
+                  max={50}
+                  value={llmMaxHistory}
+                  onChange={(e) => setLlmMaxHistory(parseInt(e.target.value) || 20)}
+                  className="mt-1.5"
+                />
+                <p className="text-xs text-muted-foreground mt-1">mensagens</p>
+              </div>
+              <div>
+                <Label>Max caracteres</Label>
+                <Input
+                  type="number"
+                  min={100}
+                  max={2000}
+                  step={50}
+                  value={llmMaxResponseLength}
+                  onChange={(e) => setLlmMaxResponseLength(parseInt(e.target.value) || 500)}
+                  className="mt-1.5"
+                />
+                <p className="text-xs text-muted-foreground mt-1">por resposta</p>
+              </div>
+              <div>
+                <Label>Temperatura</Label>
+                <Input
+                  type="number"
+                  min={0}
+                  max={1}
+                  step={0.1}
+                  value={llmTemperature}
+                  onChange={(e) => setLlmTemperature(parseFloat(e.target.value) || 0.7)}
+                  className="mt-1.5"
+                />
+                <p className="text-xs text-muted-foreground mt-1">0=preciso, 1=criativo</p>
+              </div>
+            </div>
+            <div className="p-3 rounded-lg bg-amber-500/10 border border-amber-500/30">
+              <p className="text-xs text-amber-600 font-medium">
+                Guardrails ativos: detecção de loop (3 respostas iguais → fallback), timeout 10s, rate limit 2s/msg, fallback automático para fluxo fixo em caso de erro.
+              </p>
+            </div>
+          </CardContent>
+        )}
       </Card>
 
       <Card className="bg-card border-border">

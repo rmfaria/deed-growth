@@ -5,7 +5,7 @@ export type ConversationState =
   | 'START' | 'ABERTURA' | 'CONTEXTUALIZACAO'
   | 'QUALIFICACAO_PRINCIPAL' | 'QUALIFICACAO_SECUNDARIA'
   | 'APRESENTACAO_EMPREENDIMENTO' | 'CONDICOES_COMERCIAIS'
-  | 'CONVERSAO' | 'POS_CONVERSAO' | 'AGENDAMENTO_VISITA' | 'TRANSFERENCIA_HUMANA' | 'ENCERRADO';
+  | 'CONVERSAO' | 'POS_CONVERSAO' | 'LLM_ACTIVE' | 'AGENDAMENTO_VISITA' | 'TRANSFERENCIA_HUMANA' | 'ENCERRADO';
 export type MaterialType = 'apresentacao' | 'planta' | 'mapa' | 'tabela' | 'video' | 'pdf';
 export type VisitStatus = 'solicitada' | 'confirmada' | 'realizada' | 'cancelada';
 export type HandoffStatus = 'pendente' | 'em_atendimento' | 'concluido';
@@ -92,6 +92,7 @@ export const FLOW_STAGES: { key: ConversationState; label: string; description: 
   { key: 'CONDICOES_COMERCIAIS', label: 'Condições Comerciais', description: 'Preços e parcelamento' },
   { key: 'CONVERSAO', label: 'Conversão', description: 'Material, planta, visita' },
   { key: 'POS_CONVERSAO', label: 'Pós-Conversão', description: 'Material enviado, aguardando próximo passo' },
+  { key: 'LLM_ACTIVE', label: 'IA Ativa', description: 'Conversa gerenciada por inteligência artificial' },
   { key: 'AGENDAMENTO_VISITA', label: 'Agendamento', description: 'Visita agendada' },
   { key: 'TRANSFERENCIA_HUMANA', label: 'Transferência Humana', description: 'Handoff para consultor' },
   { key: 'ENCERRADO', label: 'Encerrado', description: 'Conversa finalizada' },
