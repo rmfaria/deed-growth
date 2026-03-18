@@ -652,7 +652,9 @@ async function pushToOrbitCore(data) {
       ts: new Date().toISOString(),
     }];
 
-    fetchJSON(`${ORBIT_CORE_URL}/api/v1/ingest/events`, {
+    // Use /ingest/raw/mbc-bot so events are mapped via the connector DSL spec
+    // and appear in connector EPS/runs tracking
+    fetchJSON(`${ORBIT_CORE_URL}/api/v1/ingest/raw/mbc-bot`, {
       method: "POST",
       headers: { "X-Api-Key": ORBIT_API_KEY },
       body: JSON.stringify(events),
@@ -751,6 +753,69 @@ const server = createServer(async (req, res) => {
       return jsonResponse(res, result.status, result.body);
     } catch (err) {
       log("webhookReceiver", "evolution error", { error: err.message });
+      return jsonResponse(res, 500, { error: err.message });
+    }
+  }
+
+  // ── Manual send: text message ──
+  if (url.pathname === "/api/webhook/send" && req.method === "POST") {
+    try {
+      const body = await readBody(req);
+      const { phone, text, lead_id } = body;
+      if (!phone || !text) {
+        return jsonResponse(res, 400, { error: "Missing: phone, text" });
+      }
+
+      const result = await whatsappMessageService.sendText(phone, text);
+
+      // Log in Supabase if lead_id provided
+      if (lead_id) {
+        await supabase.insert("bot_messages", {
+          lead_id, direction: "outbound", content: text, message_type: "text",
+        });
+      }
+
+      log("manualSend", "text sent", { phone, sent: result.sent });
+      return jsonResponse(res, 200, { ok: true, sent: result.sent, data: result.data });
+    } catch (err) {
+      log("manualSend", "error", { error: err.message });
+      return jsonResponse(res, 500, { error: err.message });
+    }
+  }
+
+  // ── Manual send: media (image/video/document) ──
+  if (url.pathname === "/api/webhook/send-media" && req.method === "POST") {
+    try {
+      const body = await readBody(req);
+      const { phone, media_url, media_type, caption, lead_id } = body;
+      if (!phone || !media_url) {
+        return jsonResponse(res, 400, { error: "Missing: phone, media_url" });
+      }
+
+      if (!WHATSAPP_API_URL) {
+        return jsonResponse(res, 503, { error: "WhatsApp API not configured" });
+      }
+
+      const mediatype = media_type || "document";
+      const result = await fetchJSON(`${WHATSAPP_API_URL}/message/sendMedia/${WHATSAPP_INSTANCE}`, {
+        method: "POST",
+        headers: { apikey: WHATSAPP_API_KEY },
+        body: JSON.stringify({ number: phone, mediatype, media: media_url, caption: caption || "" }),
+      });
+
+      if (lead_id) {
+        await supabase.insert("bot_messages", {
+          lead_id, direction: "outbound",
+          content: caption ? `[${mediatype}] ${caption}` : `[${mediatype}] ${media_url}`,
+          message_type: mediatype,
+          metadata: JSON.stringify({ media_url, media_type: mediatype }),
+        });
+      }
+
+      log("manualSend", "media sent", { phone, mediatype, ok: result.ok });
+      return jsonResponse(res, 200, { ok: result.ok, data: result.data });
+    } catch (err) {
+      log("manualSend", "media error", { error: err.message });
       return jsonResponse(res, 500, { error: err.message });
     }
   }

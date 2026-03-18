@@ -39,6 +39,7 @@ const mainItems = [
 const botItems = [
   { title: "Bot Dashboard", url: "/crm/bot", icon: Bot },
   { title: "Bot Leads", url: "/crm/bot/leads", icon: Users },
+  { title: "Enviar", url: "/crm/bot/send", icon: MessageSquare },
   { title: "Fluxo", url: "/crm/bot/flow", icon: GitBranch },
   { title: "Materiais", url: "/crm/bot/materials", icon: FileText },
   { title: "Config Bot", url: "/crm/bot/settings", icon: Settings },

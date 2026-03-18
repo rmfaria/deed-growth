@@ -27,6 +27,7 @@ import BotLeadDetail from "./pages/crm/BotLeadDetail";
 import BotFlow from "./pages/crm/BotFlow";
 import BotMaterials from "./pages/crm/BotMaterials";
 import BotSettings from "./pages/crm/BotSettings";
+import BotSend from "./pages/crm/BotSend";
 import { CrmLayout } from "./components/crm/CrmLayout";
 
 const queryClient = new QueryClient();
@@ -66,6 +67,7 @@ const App = () => (
             <Route path="/crm/bot/leads" element={<CrmLayout><BotLeads /></CrmLayout>} />
             <Route path="/crm/bot/leads/:id" element={<CrmLayout><BotLeadDetail /></CrmLayout>} />
             <Route path="/crm/bot/flow" element={<CrmLayout><BotFlow /></CrmLayout>} />
+            <Route path="/crm/bot/send" element={<CrmLayout><BotSend /></CrmLayout>} />
             <Route path="/crm/bot/materials" element={<CrmLayout><BotMaterials /></CrmLayout>} />
             <Route path="/crm/bot/settings" element={<CrmLayout><BotSettings /></CrmLayout>} />
 
