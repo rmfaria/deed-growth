@@ -7,8 +7,8 @@ import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Send, Image, Video, FileText, Loader2, CheckCircle2, XCircle, Phone } from "lucide-react";
-import { useBotLeads } from "@/hooks/useBotData";
+import { Send, Image, Video, FileText, Loader2, CheckCircle2, XCircle, Phone, ScrollText } from "lucide-react";
+import { useBotLeads, useBotConfig } from "@/hooks/useBotData";
 import { ScoreBadge } from "@/components/crm/bot/ScoreBadge";
 import { toast } from "sonner";
 
@@ -39,8 +39,15 @@ const FORMAT_TIPS = [
   { label: "Monospace", syntax: "```texto```", example: "```código```" },
 ];
 
+const SCRIPT_OPTIONS = [
+  { key: "opening_message", label: "Abertura" },
+  { key: "context_message", label: "Contextualização" },
+  { key: "transfer_message", label: "Transferência para Humano" },
+] as const;
+
 const BotSend = () => {
   const { data: leads = [] } = useBotLeads();
+  const { data: botConfig } = useBotConfig();
   const [selectedLeadId, setSelectedLeadId] = useState<string>("");
   const [manualPhone, setManualPhone] = useState("");
   const [message, setMessage] = useState("");
@@ -172,6 +179,34 @@ const BotSend = () => {
 
             {/* Texto */}
             <TabsContent value="text" className="space-y-4">
+              {botConfig && (
+                <div>
+                  <Label>Script de Vendas</Label>
+                  <Select
+                    onValueChange={(key) => {
+                      const raw = botConfig[key] as string | undefined;
+                      if (!raw) return;
+                      const persona = (botConfig.persona as string) || "Rogério";
+                      setMessage(raw.replace(/\{persona\}/g, persona));
+                    }}
+                  >
+                    <SelectTrigger className="mt-1.5">
+                      <SelectValue placeholder="Selecionar script..." />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {SCRIPT_OPTIONS.map((opt) => (
+                        <SelectItem key={opt.key} value={opt.key} disabled={!botConfig[opt.key]}>
+                          <div className="flex items-center gap-2">
+                            <ScrollText size={14} className="text-muted-foreground" />
+                            <span>{opt.label}</span>
+                          </div>
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <p className="text-xs text-muted-foreground mt-1">Preenche a mensagem com o texto configurado em Configurações</p>
+                </div>
+              )}
               <div>
                 <Label>Mensagem</Label>
                 <Textarea

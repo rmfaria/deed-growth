@@ -1,17 +1,38 @@
-import { useState } from "react";
+import { useState, useRef } from "react";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Search, Download, Eye, UserCheck, Send, Calendar, Loader2 } from "lucide-react";
+import { Search, Download, Upload, Eye, UserCheck, Send, Calendar, Loader2 } from "lucide-react";
 import { ScoreBadge } from "@/components/crm/bot/ScoreBadge";
 import { StatusBadge } from "@/components/crm/bot/StatusBadge";
 import { useNavigate } from "react-router-dom";
 import { useBotLeads } from "@/hooks/useBotData";
 import { useHandoffLead, useScheduleVisit, useSendMaterial } from "@/hooks/useBotActions";
+import { supabase } from "@/integrations/supabase/client";
+import { toast } from "sonner";
+import { useQueryClient } from "@tanstack/react-query";
+
+function normalizePhone(raw: string): string | null {
+  const digits = raw.replace(/[^0-9]/g, "");
+  if (digits.length < 10 || digits.length > 13) return null;
+  if (/^(\d)\1+$/.test(digits)) return null; // all same digit (e.g. 88888888888)
+  const phone = digits.startsWith("55") ? digits : `55${digits}`;
+  return phone;
+}
+
+function parseCSV(text: string): { name: string; email: string; phone: string }[] {
+  const lines = text.trim().split("\n");
+  if (lines.length < 2) return [];
+  return lines.slice(1).map((line) => {
+    const parts = line.split(",").map((s) => s.trim());
+    return { name: parts[0] || "", email: parts[1] || "", phone: parts[2] || "" };
+  });
+}
 
 const BotLeads = () => {
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const { data: allLeads = [], isLoading } = useBotLeads();
   const handoffMutation = useHandoffLead();
   const visitMutation = useScheduleVisit();
@@ -20,6 +41,68 @@ const BotLeads = () => {
   const [scoreFilter, setScoreFilter] = useState("all");
   const [statusFilter, setStatusFilter] = useState("all");
   const [profileFilter, setProfileFilter] = useState("all");
+  const [importing, setImporting] = useState(false);
+  const fileRef = useRef<HTMLInputElement>(null);
+
+  const handleImportCSV = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setImporting(true);
+
+    try {
+      const text = await file.text();
+      const rows = parseCSV(text);
+
+      // filter test/invalid rows and normalize phones
+      const existingPhones = new Set(allLeads.map((l) => l.phone));
+      const seen = new Set<string>();
+      const valid: { name: string; phone: string }[] = [];
+
+      for (const row of rows) {
+        if (row.name.includes("<test lead") || row.phone.includes("<test lead")) continue;
+        const phone = normalizePhone(row.phone);
+        if (!phone) continue;
+        if (existingPhones.has(phone) || seen.has(phone)) continue;
+        seen.add(phone);
+        valid.push({ name: row.name, phone });
+      }
+
+      if (valid.length === 0) {
+        toast.info("Nenhum lead novo para importar.");
+        return;
+      }
+
+      // insert in batches of 50
+      let inserted = 0;
+      for (let i = 0; i < valid.length; i += 50) {
+        const batch = valid.slice(i, i + 50).map((v) => ({
+          name: v.name,
+          phone: v.phone,
+          origin: "planilha-mbc",
+          profile_type: "indefinido" as const,
+          score: 0,
+          score_classification: "frio" as const,
+          attendance_status: "bot" as const,
+          conversation_state: "START" as const,
+          construction_interest: false,
+          visit_interest: false,
+          human_handoff: false,
+        }));
+        const { error } = await supabase.from("bot_leads").insert(batch);
+        if (error) throw error;
+        inserted += batch.length;
+      }
+
+      toast.success(`${inserted} leads importados com sucesso!`);
+      queryClient.invalidateQueries({ queryKey: ["bot-leads"] });
+    } catch (err) {
+      console.error(err);
+      toast.error("Erro ao importar leads.");
+    } finally {
+      setImporting(false);
+      if (fileRef.current) fileRef.current.value = "";
+    }
+  };
 
   const filtered = allLeads.filter((l) => {
     const matchSearch = l.name.toLowerCase().includes(search.toLowerCase()) ||
@@ -60,9 +143,16 @@ const BotLeads = () => {
           <h1 className="font-display text-2xl font-bold text-foreground">Leads MBC</h1>
           <p className="text-muted-foreground font-body text-sm">{filtered.length} leads encontrados</p>
         </div>
-        <Button variant="outline" onClick={exportCSV} className="gap-2">
-          <Download size={16} /> Exportar CSV
-        </Button>
+        <div className="flex gap-2">
+          <input ref={fileRef} type="file" accept=".csv" className="hidden" onChange={handleImportCSV} />
+          <Button variant="outline" onClick={() => fileRef.current?.click()} disabled={importing} className="gap-2">
+            {importing ? <Loader2 size={16} className="animate-spin" /> : <Upload size={16} />}
+            {importing ? "Importando..." : "Importar CSV"}
+          </Button>
+          <Button variant="outline" onClick={exportCSV} className="gap-2">
+            <Download size={16} /> Exportar CSV
+          </Button>
+        </div>
       </div>
 
       <div className="flex flex-wrap gap-3">
