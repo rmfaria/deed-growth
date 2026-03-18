@@ -422,22 +422,43 @@ const whatsappMessageService = {
     }
   },
 
+  detectMediaType(url) {
+    const lower = (url || "").toLowerCase();
+    if (/\.(mp4|mov|avi|webm|3gp)/.test(lower)) return "video";
+    if (/\.(jpg|jpeg|png|gif|webp|bmp)/.test(lower)) return "image";
+    if (/\.(mp3|ogg|opus|wav|aac)/.test(lower)) return "audio";
+    return "document";
+  },
+
+  getFileName(url) {
+    try {
+      const pathname = new URL(url).pathname;
+      return pathname.split("/").pop() || "file";
+    } catch {
+      return url.split("/").pop() || "file";
+    }
+  },
+
   async sendMedia(phone, mediaUrl, caption) {
     if (!WHATSAPP_API_URL) return { sent: false, reason: "api_not_configured" };
 
     try {
+      const mediatype = this.detectMediaType(mediaUrl);
+      const fileName = this.getFileName(mediaUrl);
+
       const result = await fetchJSON(`${WHATSAPP_API_URL}/message/sendMedia/${WHATSAPP_INSTANCE}`, {
         method: "POST",
         headers: { apikey: WHATSAPP_API_KEY },
         body: JSON.stringify({
           number: phone,
-          mediatype: "document",
+          mediatype,
           media: mediaUrl,
-          caption,
+          caption: caption || "",
+          fileName,
         }),
       });
 
-      log("whatsappMessage", "media sent", { phone, ok: result.ok });
+      log("whatsappMessage", "media sent", { phone, mediatype, fileName, ok: result.ok });
       return { sent: result.ok, data: result.data };
     } catch (err) {
       log("whatsappMessage", "media send failed", { phone, error: err.message });
@@ -849,11 +870,12 @@ const server = createServer(async (req, res) => {
         return jsonResponse(res, 503, { error: "WhatsApp API not configured" });
       }
 
-      const mediatype = media_type || "document";
+      const mediatype = media_type || whatsappMessageService.detectMediaType(media_url);
+      const fileName = whatsappMessageService.getFileName(media_url);
       const result = await fetchJSON(`${WHATSAPP_API_URL}/message/sendMedia/${WHATSAPP_INSTANCE}`, {
         method: "POST",
         headers: { apikey: WHATSAPP_API_KEY },
-        body: JSON.stringify({ number: phone, mediatype, media: media_url, caption: caption || "" }),
+        body: JSON.stringify({ number: phone, mediatype, media: media_url, caption: caption || "", fileName }),
       });
 
       if (lead_id) {
