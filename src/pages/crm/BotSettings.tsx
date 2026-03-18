@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -6,10 +6,14 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
 import { Separator } from "@/components/ui/separator";
-import { Save } from "lucide-react";
+import { Save, Loader2 } from "lucide-react";
 import { SCORE_RULES } from "@/services/bot/types";
+import { useBotConfig } from "@/hooks/useBotData";
+import { supabase } from "@/integrations/supabase/client";
+import { toast } from "sonner";
 
 const BotSettings = () => {
+  const { data: config, isLoading } = useBotConfig();
   const [persona, setPersona] = useState("Rogério");
   const [openingMsg, setOpeningMsg] = useState("Olá, vi que você solicitou informações sobre os lotes do Metropolitan Business Center. Sou o {persona}, responsável pelo projeto. Posso te explicar rapidamente como funciona essa oportunidade.");
   const [contextMsg, setContextMsg] = useState("O MBC é um condomínio empresarial às margens da MG-10, próximo ao Aeroporto de Confins. Os lotes começam a partir de 1.000 m² e a região está em forte expansão logística.");
@@ -17,6 +21,55 @@ const BotSettings = () => {
   const [businessHoursStart, setBusinessHoursStart] = useState("08:00");
   const [businessHoursEnd, setBusinessHoursEnd] = useState("18:00");
   const [autoHandoffHot, setAutoHandoffHot] = useState(true);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    if (config) {
+      if (config.persona) setPersona(config.persona as string);
+      if (config.opening_message) setOpeningMsg(config.opening_message as string);
+      if (config.context_message) setContextMsg(config.context_message as string);
+      if (config.transfer_message) setTransferMsg(config.transfer_message as string);
+      if (config.business_hours_start) setBusinessHoursStart(config.business_hours_start as string);
+      if (config.business_hours_end) setBusinessHoursEnd(config.business_hours_end as string);
+      if (config.auto_handoff_hot !== undefined) setAutoHandoffHot(config.auto_handoff_hot as boolean);
+    }
+  }, [config]);
+
+  const handleSave = async () => {
+    setSaving(true);
+    const entries = [
+      { key: 'persona', value: persona },
+      { key: 'opening_message', value: openingMsg },
+      { key: 'context_message', value: contextMsg },
+      { key: 'transfer_message', value: transferMsg },
+      { key: 'business_hours_start', value: businessHoursStart },
+      { key: 'business_hours_end', value: businessHoursEnd },
+      { key: 'auto_handoff_hot', value: autoHandoffHot },
+    ];
+
+    try {
+      for (const entry of entries) {
+        const { error } = await supabase
+          .from("bot_config")
+          .upsert({ key: entry.key, value: JSON.stringify(entry.value) }, { onConflict: 'key' });
+        if (error) throw error;
+      }
+      toast.success("Configurações salvas com sucesso!");
+    } catch (err) {
+      toast.error("Erro ao salvar configurações.");
+      console.error(err);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  if (isLoading) {
+    return (
+      <div className="flex items-center justify-center py-20">
+        <Loader2 className="h-8 w-8 animate-spin text-primary" />
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6 max-w-3xl">
@@ -25,7 +78,6 @@ const BotSettings = () => {
         <p className="text-muted-foreground font-body text-sm">Configure o comportamento do bot de pré-vendas MBC</p>
       </div>
 
-      {/* Persona */}
       <Card className="bg-card border-border">
         <CardHeader>
           <CardTitle className="font-display text-base">Persona do Bot</CardTitle>
@@ -39,7 +91,6 @@ const BotSettings = () => {
         </CardContent>
       </Card>
 
-      {/* Messages */}
       <Card className="bg-card border-border">
         <CardHeader>
           <CardTitle className="font-display text-base">Mensagens do Fluxo</CardTitle>
@@ -64,7 +115,6 @@ const BotSettings = () => {
         </CardContent>
       </Card>
 
-      {/* Score Rules */}
       <Card className="bg-card border-border">
         <CardHeader>
           <CardTitle className="font-display text-base">Regras de Score</CardTitle>
@@ -85,7 +135,6 @@ const BotSettings = () => {
         </CardContent>
       </Card>
 
-      {/* Handoff & Hours */}
       <Card className="bg-card border-border">
         <CardHeader>
           <CardTitle className="font-display text-base">Handoff & Horários</CardTitle>
@@ -113,7 +162,6 @@ const BotSettings = () => {
         </CardContent>
       </Card>
 
-      {/* Integration Placeholder */}
       <Card className="bg-card border-border border-dashed">
         <CardHeader>
           <CardTitle className="font-display text-base text-muted-foreground">Integração OpenClaw</CardTitle>
@@ -131,7 +179,10 @@ const BotSettings = () => {
       </Card>
 
       <div className="flex justify-end">
-        <Button className="gap-2"><Save size={16} /> Salvar Configurações</Button>
+        <Button className="gap-2" onClick={handleSave} disabled={saving}>
+          {saving ? <Loader2 size={16} className="animate-spin" /> : <Save size={16} />}
+          Salvar Configurações
+        </Button>
       </div>
     </div>
   );

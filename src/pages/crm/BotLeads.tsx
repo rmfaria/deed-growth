@@ -3,20 +3,21 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Search, Download, Eye, UserCheck, Send, Calendar } from "lucide-react";
-import { mockLeads } from "@/services/bot/mockData";
+import { Search, Download, Eye, UserCheck, Send, Calendar, Loader2 } from "lucide-react";
 import { ScoreBadge } from "@/components/crm/bot/ScoreBadge";
 import { StatusBadge } from "@/components/crm/bot/StatusBadge";
 import { useNavigate } from "react-router-dom";
+import { useBotLeads } from "@/hooks/useBotData";
 
 const BotLeads = () => {
   const navigate = useNavigate();
+  const { data: allLeads = [], isLoading } = useBotLeads();
   const [search, setSearch] = useState("");
   const [scoreFilter, setScoreFilter] = useState("all");
   const [statusFilter, setStatusFilter] = useState("all");
   const [profileFilter, setProfileFilter] = useState("all");
 
-  const filtered = mockLeads.filter((l) => {
+  const filtered = allLeads.filter((l) => {
     const matchSearch = l.name.toLowerCase().includes(search.toLowerCase()) ||
       l.phone.includes(search) ||
       (l.origin || '').toLowerCase().includes(search.toLowerCase());
@@ -40,6 +41,14 @@ const BotLeads = () => {
     a.click();
   };
 
+  if (isLoading) {
+    return (
+      <div className="flex items-center justify-center py-20">
+        <Loader2 className="h-8 w-8 animate-spin text-primary" />
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between flex-wrap gap-4">
@@ -52,7 +61,6 @@ const BotLeads = () => {
         </Button>
       </div>
 
-      {/* Filters */}
       <div className="flex flex-wrap gap-3">
         <div className="relative flex-1 min-w-[200px] max-w-sm">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" size={16} />
@@ -89,7 +97,6 @@ const BotLeads = () => {
         </Select>
       </div>
 
-      {/* Table */}
       <div className="rounded-lg border border-border overflow-hidden">
         <Table>
           <TableHeader>

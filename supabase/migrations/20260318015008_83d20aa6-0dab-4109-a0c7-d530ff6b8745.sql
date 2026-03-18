@@ -1,0 +1,1 @@
+ALTER TABLE public.bot_config ADD CONSTRAINT bot_config_key_unique UNIQUE (key);

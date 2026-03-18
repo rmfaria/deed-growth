@@ -1,21 +1,29 @@
 import { useParams, useNavigate } from "react-router-dom";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { ArrowLeft, Send, Calendar, UserCheck, MessageSquare, Target, MapPin, Building2, TrendingUp } from "lucide-react";
-import { mockLeads, mockMessages, mockScoreEvents, mockVisits, mockHandoffs } from "@/services/bot/mockData";
+import { ArrowLeft, Send, Calendar, UserCheck, MessageSquare, Target, MapPin, Building2, TrendingUp, Loader2 } from "lucide-react";
 import { ScoreBadge } from "@/components/crm/bot/ScoreBadge";
 import { StatusBadge } from "@/components/crm/bot/StatusBadge";
 import { ConversationTimeline } from "@/components/crm/bot/ConversationTimeline";
 import { FLOW_STAGES } from "@/services/bot/types";
+import { useBotLead, useBotMessages, useScoreEvents, useBotVisits, useBotHandoffs } from "@/hooks/useBotData";
 
 const BotLeadDetail = () => {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
-  const lead = mockLeads.find(l => l.id === id);
-  const messages = mockMessages[id || ''] || [];
-  const scoreEvents = mockScoreEvents[id || ''] || [];
-  const visits = mockVisits.filter(v => v.lead_id === id);
-  const handoffs = mockHandoffs.filter(h => h.lead_id === id);
+  const { data: lead, isLoading: loadingLead } = useBotLead(id);
+  const { data: messages = [] } = useBotMessages(id);
+  const { data: scoreEvents = [] } = useScoreEvents(id);
+  const { data: visits = [] } = useBotVisits(id);
+  const { data: handoffs = [] } = useBotHandoffs(id);
+
+  if (loadingLead) {
+    return (
+      <div className="flex items-center justify-center py-20">
+        <Loader2 className="h-8 w-8 animate-spin text-primary" />
+      </div>
+    );
+  }
 
   if (!lead) {
     return (
@@ -30,7 +38,6 @@ const BotLeadDetail = () => {
 
   return (
     <div className="space-y-6">
-      {/* Header */}
       <div className="flex items-center gap-4 flex-wrap">
         <Button variant="ghost" size="icon" onClick={() => navigate('/crm/bot/leads')}>
           <ArrowLeft size={20} />
@@ -45,7 +52,6 @@ const BotLeadDetail = () => {
         </div>
       </div>
 
-      {/* Actions */}
       <div className="flex gap-2 flex-wrap">
         <Button variant="outline" className="gap-2"><Send size={14} /> Enviar Material</Button>
         <Button variant="outline" className="gap-2"><Calendar size={14} /> Agendar Visita</Button>
@@ -54,9 +60,7 @@ const BotLeadDetail = () => {
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Left - Lead Info + Score */}
         <div className="space-y-6">
-          {/* Dados do Lead */}
           <Card className="bg-card border-border">
             <CardHeader><CardTitle className="font-display text-base">Dados do Lead</CardTitle></CardHeader>
             <CardContent className="space-y-3 text-sm">
@@ -69,7 +73,6 @@ const BotLeadDetail = () => {
             </CardContent>
           </Card>
 
-          {/* Score Events */}
           <Card className="bg-card border-border">
             <CardHeader><CardTitle className="font-display text-base">Histórico de Score</CardTitle></CardHeader>
             <CardContent>
@@ -93,7 +96,6 @@ const BotLeadDetail = () => {
             </CardContent>
           </Card>
 
-          {/* Flow Progress */}
           <Card className="bg-card border-border">
             <CardHeader><CardTitle className="font-display text-base">Progresso no Fluxo</CardTitle></CardHeader>
             <CardContent>
@@ -113,7 +115,6 @@ const BotLeadDetail = () => {
           </Card>
         </div>
 
-        {/* Center - Conversation */}
         <Card className="bg-card border-border lg:col-span-2">
           <CardHeader><CardTitle className="font-display text-base">Conversa</CardTitle></CardHeader>
           <CardContent>
@@ -122,7 +123,6 @@ const BotLeadDetail = () => {
         </Card>
       </div>
 
-      {/* Visits & Handoffs */}
       {(visits.length > 0 || handoffs.length > 0) && (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
           {visits.length > 0 && (
