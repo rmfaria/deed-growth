@@ -167,7 +167,7 @@ const BotLeadDetail = () => {
   );
 };
 
-function InfoRow({ icon: Icon, label, value }: { icon: React.ComponentType<{ size?: number; className?: string }>; label: string; value: string }) {
+function InfoRow({ icon: Icon, label, value }: { icon: React.ElementType; label: string; value: string }) {
   return (
     <div className="flex items-start gap-2">
       <Icon size={14} className="text-muted-foreground mt-0.5 shrink-0" />

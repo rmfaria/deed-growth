@@ -2,7 +2,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { FLOW_STAGES } from "@/services/bot/types";
 import { ArrowDown, MessageSquare, UserCheck, Send, Calendar, HelpCircle } from "lucide-react";
 
-const stageDetails: Record<string, { icon: React.ComponentType<{ size?: number; className?: string }>; messages: string[]; variables?: string[]; actions?: string[] }> = {
+const stageDetails: Record<string, { icon: React.ElementType; messages: string[]; variables?: string[]; actions?: string[] }> = {
   START: { icon: MessageSquare, messages: ['Lead entra no sistema via WhatsApp'] },
   ABERTURA: {
     icon: MessageSquare,

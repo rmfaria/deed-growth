@@ -1,4 +1,4 @@
-import type { BotLead, ConversationState } from "@/services/bot/types";
+import type { BotLead } from "@/services/bot/types";
 import { FLOW_STAGES } from "@/services/bot/types";
 
 interface Props {
