@@ -1,17 +1,25 @@
 /**
- * MBC Bot Webhook Relay
+ * OpenClaw MBC — Bot Engine
  *
- * Lightweight Node.js service that:
- * 1. Receives WhatsApp messages (from Evolution API / Z-API / OpenClaw)
- * 2. Forwards to Supabase Edge Function (openclaw-webhook)
- * 3. Returns bot response to the caller (for WhatsApp delivery)
- * 4. Pushes lead events to orbit-core for monitoring/alerting
+ * Central hub for the MBC WhatsApp pre-sales bot.
+ * Processes all messages locally (no forwarding to Supabase Edge Functions).
  *
- * Runs on prod.nesecurity.com.br as part of the openclaw-mbc Docker stack.
- * No external dependencies — uses only Node built-in http/https.
+ * Services:
+ *   1. openclawWebhookReceiver  — receives inbound WhatsApp messages
+ *   2. conversationStateService — manages the conversation state machine
+ *   3. leadScoringService       — calculates and updates lead scores
+ *   4. handoffRouterService     — detects handoff triggers, routes to human
+ *   5. materialDispatchService  — sends materials via WhatsApp
+ *   6. visitSchedulingService   — creates and manages visit requests
+ *   7. whatsappMessageService   — sends outbound messages via WhatsApp API
+ *
+ * Persistence: Supabase (PostgreSQL) via REST API
+ * Monitoring:  orbit-core event/metric ingestion
  */
 
 import { createServer } from "node:http";
+
+// ── Environment ─────────────────────────────────────────────────────────────
 
 const PORT = parseInt(process.env.PORT || "3020", 10);
 const SUPABASE_URL = process.env.SUPABASE_URL;
@@ -19,8 +27,11 @@ const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 const WEBHOOK_SECRET = process.env.WEBHOOK_SECRET || "";
 const ORBIT_CORE_URL = process.env.ORBIT_CORE_URL || "";
 const ORBIT_API_KEY = process.env.ORBIT_API_KEY || "";
+const WHATSAPP_API_URL = process.env.WHATSAPP_API_URL || "";
+const WHATSAPP_API_KEY = process.env.WHATSAPP_API_KEY || "";
+const WHATSAPP_INSTANCE = process.env.WHATSAPP_INSTANCE || "mbc";
 
-// ── Helpers ──────────────────────────────────────────────────────────────────
+// ── Helpers ─────────────────────────────────────────────────────────────────
 
 function jsonResponse(res, status, body) {
   res.writeHead(status, { "Content-Type": "application/json" });
@@ -30,10 +41,7 @@ function jsonResponse(res, status, body) {
 async function fetchJSON(url, options = {}) {
   const resp = await fetch(url, {
     ...options,
-    headers: {
-      "Content-Type": "application/json",
-      ...(options.headers || {}),
-    },
+    headers: { "Content-Type": "application/json", ...(options.headers || {}) },
   });
   const text = await resp.text();
   try {
@@ -43,171 +51,643 @@ async function fetchJSON(url, options = {}) {
   }
 }
 
-function log(msg, data) {
+function log(service, msg, data) {
   const ts = new Date().toISOString();
-  console.log(`[${ts}] [mbc-webhook] ${msg}`, data ? JSON.stringify(data) : "");
+  console.log(`[${ts}] [${service}] ${msg}`, data ? JSON.stringify(data) : "");
 }
-
-// ── Orbit-core event push (fire-and-forget) ─────────────────────────────────
-
-async function pushToOrbitCore(leadData) {
-  if (!ORBIT_CORE_URL || !ORBIT_API_KEY) return;
-
-  try {
-    const events = [];
-
-    // Push lead state change as orbit event
-    events.push({
-      source_id: "mbc-bot",
-      namespace: "mbc",
-      kind: "lead_update",
-      severity: leadData.handoff ? "high" : "low",
-      asset_id: `lead-${leadData.lead_id}`,
-      title: leadData.handoff
-        ? `[MBC] Handoff: ${leadData.handoff_reason}`
-        : `[MBC] Lead ${leadData.phone} → ${leadData.conversation_state}`,
-      description: JSON.stringify({
-        phone: leadData.phone,
-        score: leadData.score,
-        classification: leadData.score_classification,
-        state: leadData.conversation_state,
-        detected: leadData.detected,
-      }),
-      ts: new Date().toISOString(),
-    });
-
-    // Push score as metric
-    const metrics = [
-      {
-        source_id: "mbc-bot",
-        namespace: "mbc",
-        asset_id: `lead-${leadData.lead_id}`,
-        metric: "lead.score",
-        value: leadData.score,
-        ts: new Date().toISOString(),
-      },
-    ];
-
-    // Fire-and-forget — don't block the webhook response
-    fetchJSON(`${ORBIT_CORE_URL}/api/v1/ingest/events`, {
-      method: "POST",
-      headers: { "X-Api-Key": ORBIT_API_KEY },
-      body: JSON.stringify(events),
-    }).catch((err) => log("orbit-core event push failed", { error: err.message }));
-
-    fetchJSON(`${ORBIT_CORE_URL}/api/v1/ingest/metrics`, {
-      method: "POST",
-      headers: { "X-Api-Key": ORBIT_API_KEY },
-      body: JSON.stringify(metrics),
-    }).catch((err) => log("orbit-core metric push failed", { error: err.message }));
-  } catch (err) {
-    log("orbit-core push error", { error: err.message });
-  }
-}
-
-// ── Request body parser ─────────────────────────────────────────────────────
 
 function readBody(req) {
   return new Promise((resolve, reject) => {
     const chunks = [];
     req.on("data", (c) => chunks.push(c));
     req.on("end", () => {
-      try {
-        resolve(JSON.parse(Buffer.concat(chunks).toString()));
-      } catch {
-        reject(new Error("Invalid JSON"));
-      }
+      try { resolve(JSON.parse(Buffer.concat(chunks).toString())); }
+      catch { reject(new Error("Invalid JSON")); }
     });
     req.on("error", reject);
   });
 }
 
-// ── HTTP Server ─────────────────────────────────────────────────────────────
+// ── Supabase Client ─────────────────────────────────────────────────────────
 
-const server = createServer(async (req, res) => {
-  // CORS
-  res.setHeader("Access-Control-Allow-Origin", "*");
-  res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
-  res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Webhook-Secret");
+const supabase = {
+  async query(table, method, params = {}) {
+    let url = `${SUPABASE_URL}/rest/v1/${table}`;
+    const headers = {
+      apikey: SUPABASE_SERVICE_ROLE_KEY,
+      Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+      "Content-Type": "application/json",
+      Prefer: method === "INSERT" ? "return=representation" : "return=representation",
+    };
 
-  if (req.method === "OPTIONS") {
-    res.writeHead(204);
-    return res.end();
-  }
+    if (method === "SELECT") {
+      const qs = Object.entries(params.filters || {}).map(([k, v]) => `${k}=eq.${v}`).join("&");
+      if (qs) url += `?${qs}`;
+      if (params.single) headers.Accept = "application/vnd.pgrst.object+json";
+      const r = await fetchJSON(url, { method: "GET", headers });
+      return r.data;
+    }
 
-  const url = new URL(req.url, `http://localhost:${PORT}`);
+    if (method === "INSERT") {
+      url += "?select=*";
+      const r = await fetchJSON(url, { method: "POST", headers, body: JSON.stringify(params.body) });
+      return Array.isArray(r.data) ? r.data[0] : r.data;
+    }
 
-  // ── Health check ──
-  if (url.pathname === "/health" || url.pathname === "/api/webhook/health") {
-    return jsonResponse(res, 200, { status: "ok", service: "mbc-webhook-relay", uptime: process.uptime() });
-  }
+    if (method === "UPDATE") {
+      const qs = Object.entries(params.filters || {}).map(([k, v]) => `${k}=eq.${v}`).join("&");
+      url += `?${qs}&select=*`;
+      const r = await fetchJSON(url, { method: "PATCH", headers, body: JSON.stringify(params.body) });
+      return Array.isArray(r.data) ? r.data[0] : r.data;
+    }
+  },
 
-  // ── Webhook: receive WhatsApp message ──
-  if (url.pathname === "/api/webhook/whatsapp" && req.method === "POST") {
+  async selectOne(table, filters) {
+    return this.query(table, "SELECT", { filters, single: true });
+  },
+  async selectMany(table, filters) {
+    return this.query(table, "SELECT", { filters });
+  },
+  async insert(table, body) {
+    return this.query(table, "INSERT", { body });
+  },
+  async update(table, filters, body) {
+    return this.query(table, "UPDATE", { filters, body });
+  },
+};
+
+// ═══════════════════════════════════════════════════════════════════════════
+// SERVICE 1: conversationStateService
+// ═══════════════════════════════════════════════════════════════════════════
+
+const STATE_TRANSITIONS = {
+  START: "ABERTURA",
+  ABERTURA: "CONTEXTUALIZACAO",
+  CONTEXTUALIZACAO: "QUALIFICACAO_PRINCIPAL",
+  QUALIFICACAO_PRINCIPAL: "QUALIFICACAO_SECUNDARIA",
+  QUALIFICACAO_SECUNDARIA: "APRESENTACAO_EMPREENDIMENTO",
+  APRESENTACAO_EMPREENDIMENTO: "CONDICOES_COMERCIAIS",
+  CONDICOES_COMERCIAIS: "CONVERSAO",
+  CONVERSAO: "CONVERSAO", // stays until action
+};
+
+const BOT_MESSAGES = {
+  ABERTURA:
+    "Olá! Vi que você solicitou informações sobre os lotes do Metropolitan Business Center. Sou o Rogério, responsável pelo projeto. Posso te explicar rapidamente como funciona essa oportunidade.",
+  CONTEXTUALIZACAO:
+    "O MBC é um condomínio empresarial às margens da MG-10, próximo ao Aeroporto de Confins. Os lotes começam a partir de 1.000 m² e a região está em forte expansão logística.",
+  QUALIFICACAO_PRINCIPAL:
+    "Você está avaliando para instalar sua empresa ou pensando como investimento?",
+  QUALIFICACAO_SECUNDARIA_EMPRESA:
+    "Ótimo! Qual tipo de operação você pretende instalar e qual a metragem necessária?",
+  QUALIFICACAO_SECUNDARIA_INVESTIMENTO:
+    "Interessante! Você busca valorização patrimonial ou pensa em construir um galpão para renda?",
+  APRESENTACAO_EMPREENDIMENTO:
+    "O MBC oferece: ruas de 10m de largura com asfalto para carretas, rotatórias para manobra, portaria com segurança 24h, energia Cemig, água Copasa e internet. Localização privilegiada a 3km do Aeroporto de Confins.",
+  CONDICOES_COMERCIAIS:
+    "As condições são: preço base R$ 530.000, entrada de 20%, saldo em até 24 parcelas (Price – 0,99% a.m.), condomínio aproximado de R$ 500/mês.",
+  CONVERSAO:
+    "Posso te enviar o material completo do empreendimento? Ou se preferir, posso enviar a planta ou agendar uma visita. O que faz mais sentido para você?",
+  TRANSFERENCIA_HUMANA:
+    "Vou te conectar com um consultor que vai cuidar de tudo para você. Em breve ele entrará em contato!",
+};
+
+const conversationStateService = {
+  getNextState(currentState, detectedProfile) {
+    if (currentState === "QUALIFICACAO_PRINCIPAL" && detectedProfile) {
+      return "QUALIFICACAO_SECUNDARIA";
+    }
+    return STATE_TRANSITIONS[currentState] || currentState;
+  },
+
+  getBotResponse(state, profileType) {
+    if (state === "QUALIFICACAO_SECUNDARIA") {
+      return profileType === "empresa"
+        ? BOT_MESSAGES.QUALIFICACAO_SECUNDARIA_EMPRESA
+        : BOT_MESSAGES.QUALIFICACAO_SECUNDARIA_INVESTIMENTO;
+    }
+    return BOT_MESSAGES[state] || BOT_MESSAGES.CONVERSAO;
+  },
+};
+
+// ═══════════════════════════════════════════════════════════════════════════
+// SERVICE 2: leadScoringService
+// ═══════════════════════════════════════════════════════════════════════════
+
+const SCORE_MAP = {
+  perfil_respondido:   { points: 10, description: "Respondeu perfil" },
+  objetivo_informado:  { points: 10, description: "Informou objetivo" },
+  metragem_informada:  { points: 10, description: "Informou metragem" },
+  material_solicitado: { points: 20, description: "Solicitou material" },
+  planta_solicitada:   { points: 15, description: "Solicitou planta" },
+  visita_aceita:       { points: 25, description: "Aceitou visita" },
+  proposta_solicitada: { points: 30, description: "Solicitou proposta" },
+};
+
+const leadScoringService = {
+  classifyScore(score) {
+    if (score >= 51) return "quente";
+    if (score >= 21) return "morno";
+    return "frio";
+  },
+
+  detectProfile(text) {
+    const lower = text.toLowerCase();
+    if (/empresa|instalar|galpão|logística|operação|sede|escritório|depósito|distribuição/.test(lower))
+      return "empresa";
+    if (/invest|valorização|patrimôn|renda|revender|comprar/.test(lower))
+      return "investimento";
+    return null;
+  },
+
+  detectObjective(text) {
+    const lower = text.toLowerCase();
+    const objectives = [
+      "centro de distribuição", "galpão", "logística", "sede", "escritório",
+      "depósito", "valorização", "renda", "revender", "construir",
+    ];
+    for (const obj of objectives) {
+      if (lower.includes(obj)) return obj;
+    }
+    return null;
+  },
+
+  detectArea(text) {
+    const match = text.match(/(\d[\d.,]*)\s*m[²2]?/i);
+    return match ? `${match[1]} m²` : null;
+  },
+
+  detectScoreEvents(text, lead) {
+    const events = [];
+    const lower = text.toLowerCase();
+
+    if (this.detectProfile(text) && !lead.profile_type) events.push("perfil_respondido");
+    if (this.detectObjective(text) && !lead.objective) events.push("objetivo_informado");
+    if (this.detectArea(text) && !lead.desired_area) events.push("metragem_informada");
+    if (/material|apresentação|book|brochura/.test(lower)) events.push("material_solicitado");
+    if (/planta/.test(lower)) events.push("planta_solicitada");
+    if (/visita|conhecer|ir até|ver pessoalmente/.test(lower)) events.push("visita_aceita");
+    if (/proposta|orçamento|simulação/.test(lower)) events.push("proposta_solicitada");
+
+    return events;
+  },
+
+  async persistScoreEvents(leadId, events) {
+    let totalPoints = 0;
+    for (const eventType of events) {
+      const rule = SCORE_MAP[eventType];
+      if (rule) {
+        await supabase.insert("score_events", {
+          lead_id: leadId,
+          event_type: eventType,
+          points: rule.points,
+          description: rule.description,
+        });
+        totalPoints += rule.points;
+      }
+    }
+    return totalPoints;
+  },
+};
+
+// ═══════════════════════════════════════════════════════════════════════════
+// SERVICE 3: handoffRouterService
+// ═══════════════════════════════════════════════════════════════════════════
+
+const HANDOFF_KEYWORDS = [
+  "proposta personalizada", "visita", "desconto", "negociar",
+  "veículo na entrada", "carro na entrada", "condição especial",
+  "condição diferenciada", "falar com alguém", "falar com humano", "atendente",
+];
+
+const handoffRouterService = {
+  detectTrigger(text) {
+    const lower = text.toLowerCase();
+    for (const keyword of HANDOFF_KEYWORDS) {
+      if (lower.includes(keyword)) return keyword;
+    }
+    return null;
+  },
+
+  needsHandoff(text, score) {
+    const trigger = this.detectTrigger(text);
+    const isHotLead = score >= 51;
+    return {
+      needed: !!trigger || isHotLead,
+      reason: trigger ? `Detectado: ${trigger}` : isHotLead ? "Score alto (lead quente)" : null,
+    };
+  },
+
+  async createHandoff(leadId, reason) {
+    await supabase.insert("bot_handoffs", {
+      lead_id: leadId,
+      reason,
+      status: "pendente",
+    });
+    log("handoffRouter", "handoff created", { leadId, reason });
+  },
+};
+
+// ═══════════════════════════════════════════════════════════════════════════
+// SERVICE 4: materialDispatchService
+// ═══════════════════════════════════════════════════════════════════════════
+
+const materialDispatchService = {
+  detectMaterialRequest(text) {
+    const lower = text.toLowerCase();
+    const requests = [];
+    if (/material|apresentação|book|brochura/.test(lower)) requests.push("apresentacao");
+    if (/planta/.test(lower)) requests.push("planta");
+    if (/mapa|localização|como chegar/.test(lower)) requests.push("mapa");
+    if (/tabela|preço|valores/.test(lower)) requests.push("tabela");
+    if (/vídeo|video/.test(lower)) requests.push("video");
+    return requests;
+  },
+
+  async getActiveMaterials(types) {
+    const materials = await supabase.selectMany("bot_materials", { is_active: true });
+    if (!Array.isArray(materials)) return [];
+    return materials.filter((m) => types.includes(m.type));
+  },
+
+  async dispatch(leadId, text) {
+    const requested = this.detectMaterialRequest(text);
+    if (requested.length === 0) return [];
+
+    const materials = await this.getActiveMaterials(requested);
+    const sent = [];
+
+    for (const material of materials) {
+      // Send via WhatsApp
+      await whatsappMessageService.sendMedia(leadId, material.url, material.name);
+      sent.push({ type: material.type, name: material.name });
+    }
+
+    if (sent.length > 0) {
+      log("materialDispatch", "materials sent", { leadId, sent });
+    }
+    return sent;
+  },
+};
+
+// ═══════════════════════════════════════════════════════════════════════════
+// SERVICE 5: visitSchedulingService
+// ═══════════════════════════════════════════════════════════════════════════
+
+const visitSchedulingService = {
+  detectVisitIntent(text) {
+    return /visita|conhecer|ir até|ver pessoalmente|agendar/.test(text.toLowerCase());
+  },
+
+  async createVisitRequest(leadId, message) {
+    await supabase.insert("bot_visits", {
+      lead_id: leadId,
+      status: "solicitada",
+      notes: `Solicitado via WhatsApp: "${message.slice(0, 200)}"`,
+    });
+    log("visitScheduling", "visit request created", { leadId });
+  },
+};
+
+// ═══════════════════════════════════════════════════════════════════════════
+// SERVICE 6: whatsappMessageService
+// ═══════════════════════════════════════════════════════════════════════════
+
+const whatsappMessageService = {
+  async sendText(phone, text) {
+    if (!WHATSAPP_API_URL) {
+      log("whatsappMessage", "WHATSAPP_API_URL not set — skipping send", { phone });
+      return { sent: false, reason: "api_not_configured" };
+    }
+
     try {
-      // Validate secret
-      if (WEBHOOK_SECRET && req.headers["x-webhook-secret"] !== WEBHOOK_SECRET) {
-        log("unauthorized webhook attempt");
-        return jsonResponse(res, 401, { error: "Unauthorized" });
-      }
-
-      const body = await readBody(req);
-      log("incoming message", { phone: body.phone, origin: body.origin });
-
-      // Validate required fields
-      if (!body.phone || !body.message) {
-        return jsonResponse(res, 400, { error: "Missing required fields: phone, message" });
-      }
-
-      // Forward to Supabase Edge Function
-      const supabaseUrl = `${SUPABASE_URL}/functions/v1/openclaw-webhook`;
-      const result = await fetchJSON(supabaseUrl, {
+      const result = await fetchJSON(`${WHATSAPP_API_URL}/message/sendText/${WHATSAPP_INSTANCE}`, {
         method: "POST",
-        headers: {
-          Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
-        },
+        headers: { apikey: WHATSAPP_API_KEY },
         body: JSON.stringify({
-          phone: body.phone,
-          message: body.message,
-          sender_name: body.sender_name || body.pushName || "Lead WhatsApp",
-          origin: body.origin || "whatsapp",
+          number: phone,
+          text,
         }),
       });
 
-      if (!result.ok) {
-        log("supabase error", { status: result.status, data: result.data });
-        return jsonResponse(res, 502, { error: "Upstream error", details: result.data });
-      }
+      log("whatsappMessage", "text sent", { phone, ok: result.ok });
+      return { sent: result.ok, data: result.data };
+    } catch (err) {
+      log("whatsappMessage", "send failed", { phone, error: err.message });
+      return { sent: false, error: err.message };
+    }
+  },
 
-      // Push to orbit-core (fire-and-forget)
-      pushToOrbitCore(result.data);
+  async sendMedia(phone, mediaUrl, caption) {
+    if (!WHATSAPP_API_URL) return { sent: false, reason: "api_not_configured" };
 
-      log("processed", {
-        lead_id: result.data.lead_id,
-        state: result.data.conversation_state,
-        score: result.data.score,
-        handoff: result.data.handoff,
+    try {
+      const result = await fetchJSON(`${WHATSAPP_API_URL}/message/sendMedia/${WHATSAPP_INSTANCE}`, {
+        method: "POST",
+        headers: { apikey: WHATSAPP_API_KEY },
+        body: JSON.stringify({
+          number: phone,
+          mediatype: "document",
+          media: mediaUrl,
+          caption,
+        }),
       });
 
-      // Return bot response (caller sends it via WhatsApp)
-      return jsonResponse(res, 200, result.data);
+      log("whatsappMessage", "media sent", { phone, ok: result.ok });
+      return { sent: result.ok, data: result.data };
     } catch (err) {
-      log("webhook error", { error: err.message });
+      log("whatsappMessage", "media send failed", { phone, error: err.message });
+      return { sent: false, error: err.message };
+    }
+  },
+};
+
+// ═══════════════════════════════════════════════════════════════════════════
+// SERVICE 7: openclawWebhookReceiver (ORCHESTRATOR)
+// ═══════════════════════════════════════════════════════════════════════════
+
+const openclawWebhookReceiver = {
+  sanitize(body) {
+    return {
+      phone: String(body.phone || "").replace(/[^\d+() -]/g, "").slice(0, 30),
+      message: String(body.message || "").slice(0, 2000),
+      senderName: body.sender_name ? String(body.sender_name).slice(0, 200) : "Lead WhatsApp",
+      origin: body.origin ? String(body.origin).slice(0, 100) : "whatsapp",
+    };
+  },
+
+  async findOrCreateLead(phone, senderName, origin) {
+    let lead = await supabase.selectOne("bot_leads", { phone });
+
+    if (!lead || lead.code === "PGRST116") {
+      lead = await supabase.insert("bot_leads", {
+        name: senderName,
+        phone,
+        origin,
+        conversation_state: "START",
+        score: 0,
+        score_classification: "frio",
+        attendance_status: "bot",
+      });
+      log("webhookReceiver", "lead created", { id: lead.id, phone });
+    }
+
+    return lead;
+  },
+
+  async process(body) {
+    const { phone, message, senderName, origin } = this.sanitize(body);
+
+    if (!phone || !message) {
+      return { status: 400, body: { error: "Missing required fields: phone, message" } };
+    }
+
+    // ── Find or create lead ──
+    const lead = await this.findOrCreateLead(phone, senderName, origin);
+
+    // ── Save inbound message ──
+    await supabase.insert("bot_messages", {
+      lead_id: lead.id,
+      direction: "inbound",
+      content: message,
+      message_type: "text",
+    });
+
+    // ── Skip if already handled by human ──
+    if (["em_atendimento", "atendido", "encerrado"].includes(lead.attendance_status)) {
+      log("webhookReceiver", "skipped — human handling", { leadId: lead.id });
+      return {
+        status: 200,
+        body: { status: "skipped", reason: "Lead is being handled by human", lead_id: lead.id },
+      };
+    }
+
+    // ── leadScoringService: detect & persist score events ──
+    const scoreEvents = leadScoringService.detectScoreEvents(message, lead);
+    const newPoints = await leadScoringService.persistScoreEvents(lead.id, scoreEvents);
+    const newScore = lead.score + newPoints;
+    const classification = leadScoringService.classifyScore(newScore);
+
+    // ── Build lead updates ──
+    const updates = {
+      last_message_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+      score: newScore,
+      score_classification: classification,
+    };
+
+    const detectedProfile = leadScoringService.detectProfile(message);
+    if (detectedProfile && !lead.profile_type) updates.profile_type = detectedProfile;
+
+    const detectedObjective = leadScoringService.detectObjective(message);
+    if (detectedObjective && !lead.objective) updates.objective = detectedObjective;
+
+    const detectedArea = leadScoringService.detectArea(message);
+    if (detectedArea && !lead.desired_area) updates.desired_area = detectedArea;
+
+    if (/constru|galpão para/.test(message.toLowerCase())) {
+      updates.construction_interest = true;
+    }
+
+    // ── handoffRouterService: check if needs human ──
+    const handoff = handoffRouterService.needsHandoff(message, newScore);
+    let botResponse;
+
+    if (handoff.needed) {
+      updates.human_handoff = true;
+      updates.handoff_reason = handoff.reason;
+      updates.attendance_status = "aguardando_humano";
+      updates.conversation_state = "TRANSFERENCIA_HUMANA";
+
+      await handoffRouterService.createHandoff(lead.id, handoff.reason);
+
+      // ── visitSchedulingService: check visit intent ──
+      if (visitSchedulingService.detectVisitIntent(message)) {
+        updates.visit_interest = true;
+        await visitSchedulingService.createVisitRequest(lead.id, message);
+      }
+
+      botResponse = BOT_MESSAGES.TRANSFERENCIA_HUMANA;
+    } else {
+      // ── conversationStateService: advance state ──
+      const currentState = lead.conversation_state || "START";
+      const nextState = conversationStateService.getNextState(currentState, detectedProfile);
+      updates.conversation_state = nextState;
+
+      const profile = updates.profile_type || lead.profile_type;
+      botResponse = conversationStateService.getBotResponse(nextState, profile);
+    }
+
+    // ── Save outbound message ──
+    await supabase.insert("bot_messages", {
+      lead_id: lead.id,
+      direction: "outbound",
+      content: botResponse,
+      message_type: "text",
+    });
+
+    // ── Update lead ──
+    await supabase.update("bot_leads", { id: lead.id }, updates);
+
+    // ── materialDispatchService: send materials if requested ──
+    const materialsSent = await materialDispatchService.dispatch(phone, message);
+
+    // ── whatsappMessageService: send bot response ──
+    const whatsappResult = await whatsappMessageService.sendText(phone, botResponse);
+
+    // ── Build response payload ──
+    const responsePayload = {
+      status: "processed",
+      lead_id: lead.id,
+      phone,
+      bot_response: botResponse,
+      conversation_state: updates.conversation_state || lead.conversation_state,
+      score: newScore,
+      score_classification: classification,
+      handoff: handoff.needed,
+      handoff_reason: handoff.reason,
+      score_events: scoreEvents,
+      materials_sent: materialsSent,
+      whatsapp_sent: whatsappResult.sent,
+      detected: {
+        profile: detectedProfile,
+        objective: detectedObjective,
+        area: detectedArea,
+      },
+    };
+
+    log("webhookReceiver", "processed", {
+      lead_id: lead.id,
+      state: responsePayload.conversation_state,
+      score: newScore,
+      handoff: handoff.needed,
+      whatsapp_sent: whatsappResult.sent,
+    });
+
+    // ── Push to orbit-core (fire-and-forget) ──
+    pushToOrbitCore(responsePayload);
+
+    return { status: 200, body: responsePayload };
+  },
+};
+
+// ── orbit-core monitoring (fire-and-forget) ─────────────────────────────────
+
+async function pushToOrbitCore(data) {
+  if (!ORBIT_CORE_URL || !ORBIT_API_KEY) return;
+
+  try {
+    const events = [{
+      source_id: "mbc-bot",
+      namespace: "mbc",
+      kind: "lead_update",
+      severity: data.handoff ? "high" : "low",
+      asset_id: `lead-${data.lead_id}`,
+      title: data.handoff
+        ? `[MBC] Handoff: ${data.handoff_reason}`
+        : `[MBC] Lead ${data.phone} → ${data.conversation_state}`,
+      description: JSON.stringify({
+        phone: data.phone,
+        score: data.score,
+        classification: data.score_classification,
+        state: data.conversation_state,
+        detected: data.detected,
+      }),
+      ts: new Date().toISOString(),
+    }];
+
+    const metrics = [{
+      source_id: "mbc-bot",
+      namespace: "mbc",
+      asset_id: `lead-${data.lead_id}`,
+      metric: "lead.score",
+      value: data.score,
+      ts: new Date().toISOString(),
+    }];
+
+    fetchJSON(`${ORBIT_CORE_URL}/api/v1/ingest/events`, {
+      method: "POST",
+      headers: { "X-Api-Key": ORBIT_API_KEY },
+      body: JSON.stringify(events),
+    }).catch((e) => log("orbitCore", "event push failed", { error: e.message }));
+
+    fetchJSON(`${ORBIT_CORE_URL}/api/v1/ingest/metrics`, {
+      method: "POST",
+      headers: { "X-Api-Key": ORBIT_API_KEY },
+      body: JSON.stringify(metrics),
+    }).catch((e) => log("orbitCore", "metric push failed", { error: e.message }));
+  } catch (err) {
+    log("orbitCore", "push error", { error: err.message });
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// HTTP SERVER
+// ═══════════════════════════════════════════════════════════════════════════
+
+const server = createServer(async (req, res) => {
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Webhook-Secret, apikey");
+
+  if (req.method === "OPTIONS") { res.writeHead(204); return res.end(); }
+
+  const url = new URL(req.url, `http://localhost:${PORT}`);
+
+  // ── Health ──
+  if (url.pathname === "/health" || url.pathname === "/api/webhook/health") {
+    return jsonResponse(res, 200, {
+      status: "ok",
+      service: "openclaw-mbc",
+      uptime: process.uptime(),
+      services: [
+        "openclawWebhookReceiver",
+        "conversationStateService",
+        "leadScoringService",
+        "handoffRouterService",
+        "materialDispatchService",
+        "visitSchedulingService",
+        "whatsappMessageService",
+      ],
+    });
+  }
+
+  // ── Stats ──
+  if (url.pathname === "/api/webhook/stats" && req.method === "GET") {
+    return jsonResponse(res, 200, {
+      service: "openclaw-mbc",
+      uptime: process.uptime(),
+      config: {
+        supabase: !!SUPABASE_URL,
+        orbit_core: !!ORBIT_CORE_URL,
+        whatsapp_api: !!WHATSAPP_API_URL,
+        webhook_secret: !!WEBHOOK_SECRET,
+      },
+    });
+  }
+
+  // ── Main webhook: generic format ──
+  if (url.pathname === "/api/webhook/whatsapp" && req.method === "POST") {
+    try {
+      if (WEBHOOK_SECRET && req.headers["x-webhook-secret"] !== WEBHOOK_SECRET) {
+        return jsonResponse(res, 401, { error: "Unauthorized" });
+      }
+      const body = await readBody(req);
+      const result = await openclawWebhookReceiver.process(body);
+      return jsonResponse(res, result.status, result.body);
+    } catch (err) {
+      log("webhookReceiver", "error", { error: err.message });
       return jsonResponse(res, 500, { error: err.message });
     }
   }
 
-  // ── Webhook: Evolution API format adapter ──
+  // ── Evolution API adapter ──
   if (url.pathname === "/api/webhook/evolution" && req.method === "POST") {
     try {
       if (WEBHOOK_SECRET && req.headers["x-webhook-secret"] !== WEBHOOK_SECRET) {
         return jsonResponse(res, 401, { error: "Unauthorized" });
       }
-
       const body = await readBody(req);
-
-      // Evolution API payload structure
-      // { data: { key: { remoteJid }, pushName, message: { conversation } } }
       const data = body.data || body;
       const remoteJid = data?.key?.remoteJid || "";
       const phone = remoteJid.replace("@s.whatsapp.net", "").replace("@g.us", "");
@@ -215,44 +695,17 @@ const server = createServer(async (req, res) => {
       const pushName = data?.pushName || "Lead WhatsApp";
 
       if (!phone || !message) {
-        log("evolution: no phone or message in payload");
         return jsonResponse(res, 200, { status: "ignored", reason: "no text message" });
       }
 
-      log("evolution incoming", { phone, pushName });
-
-      // Forward to Supabase
-      const supabaseUrl = `${SUPABASE_URL}/functions/v1/openclaw-webhook`;
-      const result = await fetchJSON(supabaseUrl, {
-        method: "POST",
-        headers: { Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}` },
-        body: JSON.stringify({ phone, message, sender_name: pushName, origin: "evolution-api" }),
+      const result = await openclawWebhookReceiver.process({
+        phone, message, sender_name: pushName, origin: "evolution-api",
       });
-
-      if (!result.ok) {
-        return jsonResponse(res, 502, { error: "Upstream error", details: result.data });
-      }
-
-      pushToOrbitCore(result.data);
-
-      return jsonResponse(res, 200, result.data);
+      return jsonResponse(res, result.status, result.body);
     } catch (err) {
-      log("evolution webhook error", { error: err.message });
+      log("webhookReceiver", "evolution error", { error: err.message });
       return jsonResponse(res, 500, { error: err.message });
     }
-  }
-
-  // ── Stats endpoint ──
-  if (url.pathname === "/api/webhook/stats" && req.method === "GET") {
-    return jsonResponse(res, 200, {
-      service: "mbc-webhook-relay",
-      uptime: process.uptime(),
-      env: {
-        supabase_configured: !!SUPABASE_URL,
-        orbit_core_configured: !!ORBIT_CORE_URL,
-        webhook_secret_set: !!WEBHOOK_SECRET,
-      },
-    });
   }
 
   // ── 404 ──
@@ -260,7 +713,8 @@ const server = createServer(async (req, res) => {
 });
 
 server.listen(PORT, "0.0.0.0", () => {
-  log(`listening on port ${PORT}`);
-  log(`supabase: ${SUPABASE_URL ? "configured" : "NOT SET"}`);
-  log(`orbit-core: ${ORBIT_CORE_URL ? "configured" : "NOT SET"}`);
+  log("openclaw-mbc", `listening on port ${PORT}`);
+  log("openclaw-mbc", `supabase: ${SUPABASE_URL ? "OK" : "NOT SET"}`);
+  log("openclaw-mbc", `whatsapp: ${WHATSAPP_API_URL ? "OK" : "NOT SET"}`);
+  log("openclaw-mbc", `orbit-core: ${ORBIT_CORE_URL ? "OK" : "NOT SET"}`);
 });

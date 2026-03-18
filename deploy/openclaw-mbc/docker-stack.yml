@@ -1,6 +1,6 @@
 version: "3.8"
 
-# deed-growth (MBC Bot) Docker Swarm stack
+# OpenClaw MBC — Docker Swarm stack
 # Deploy: docker stack deploy -c deploy/openclaw-mbc/docker-stack.yml openclaw-mbc
 # Workspace: /root/.openclaw/workspace/openclaw-mbc
 
@@ -53,8 +53,8 @@ services:
         # ── Service port ──
         - traefik.http.services.mbc-ui.loadbalancer.server.port=80
 
-  # ── Webhook Relay (lightweight Node proxy for OpenClaw ↔ Supabase) ──────
-  mbc_webhook:
+  # ── OpenClaw MBC Engine (bot logic, scoring, state machine, WhatsApp) ────
+  mbc_engine:
     image: node:22-alpine
     command: ["node", "/app/deploy/openclaw-mbc/webhook-relay.mjs"]
     working_dir: /app
@@ -62,6 +62,9 @@ services:
       - PORT=3020
       - SUPABASE_URL=${SUPABASE_URL}
       - SUPABASE_SERVICE_ROLE_KEY=${SUPABASE_SERVICE_ROLE_KEY}
+      - WHATSAPP_API_URL=${WHATSAPP_API_URL}
+      - WHATSAPP_API_KEY=${WHATSAPP_API_KEY}
+      - WHATSAPP_INSTANCE=${WHATSAPP_INSTANCE:-mbc}
       - WEBHOOK_SECRET=${WEBHOOK_SECRET}
       - ORBIT_CORE_URL=${ORBIT_CORE_URL:-http://orbitcore_api:3010}
       - ORBIT_API_KEY=${ORBIT_API_KEY}
