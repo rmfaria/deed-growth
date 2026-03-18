@@ -1,35 +1,30 @@
-import { useState } from "react";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
-import { Plus, FileText, Map, Image, Video, Table2, BookOpen, ExternalLink, Pencil, Trash2 } from "lucide-react";
-import { mockMaterials } from "@/services/bot/mockData";
+import { Plus, FileText, Map, Video, Table2, BookOpen, ExternalLink, Pencil, Trash2, Loader2 } from "lucide-react";
+import { useBotMaterials } from "@/hooks/useBotData";
 import type { MaterialType } from "@/services/bot/types";
 
 const typeIcons: Record<MaterialType, React.ElementType> = {
-  apresentacao: BookOpen,
-  planta: FileText,
-  mapa: Map,
-  tabela: Table2,
-  video: Video,
-  pdf: FileText,
+  apresentacao: BookOpen, planta: FileText, mapa: Map, tabela: Table2, video: Video, pdf: FileText,
 };
 
 const typeLabels: Record<MaterialType, string> = {
-  apresentacao: 'Apresentação',
-  planta: 'Planta',
-  mapa: 'Mapa',
-  tabela: 'Tabela',
-  video: 'Vídeo',
-  pdf: 'PDF',
+  apresentacao: 'Apresentação', planta: 'Planta', mapa: 'Mapa', tabela: 'Tabela', video: 'Vídeo', pdf: 'PDF',
 };
 
 const BotMaterials = () => {
-  const [materials] = useState(mockMaterials);
-
+  const { data: materials = [], isLoading } = useBotMaterials();
   const activeCount = materials.filter(m => m.is_active).length;
+
+  if (isLoading) {
+    return (
+      <div className="flex items-center justify-center py-20">
+        <Loader2 className="h-8 w-8 animate-spin text-primary" />
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">
@@ -38,12 +33,9 @@ const BotMaterials = () => {
           <h1 className="font-display text-2xl font-bold text-foreground">Materiais</h1>
           <p className="text-muted-foreground font-body text-sm">{materials.length} materiais cadastrados • {activeCount} ativos</p>
         </div>
-        <Button className="gap-2">
-          <Plus size={16} /> Novo Material
-        </Button>
+        <Button className="gap-2"><Plus size={16} /> Novo Material</Button>
       </div>
 
-      {/* Category Cards */}
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
         {(Object.keys(typeLabels) as MaterialType[]).map((type) => {
           const Icon = typeIcons[type];
@@ -60,7 +52,6 @@ const BotMaterials = () => {
         })}
       </div>
 
-      {/* Table */}
       <div className="rounded-lg border border-border overflow-hidden">
         <Table>
           <TableHeader>
@@ -75,7 +66,7 @@ const BotMaterials = () => {
           </TableHeader>
           <TableBody>
             {materials.map((mat) => {
-              const Icon = typeIcons[mat.type];
+              const Icon = typeIcons[mat.type as MaterialType] || FileText;
               return (
                 <TableRow key={mat.id}>
                   <TableCell>
@@ -84,7 +75,7 @@ const BotMaterials = () => {
                       <span className="font-medium">{mat.name}</span>
                     </div>
                   </TableCell>
-                  <TableCell className="text-sm">{typeLabels[mat.type]}</TableCell>
+                  <TableCell className="text-sm">{typeLabels[mat.type as MaterialType] || mat.type}</TableCell>
                   <TableCell className="text-sm capitalize">{mat.category || '—'}</TableCell>
                   <TableCell>
                     <Badge variant={mat.is_active ? "default" : "secondary"} className={mat.is_active ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30' : ''}>
@@ -108,6 +99,11 @@ const BotMaterials = () => {
                 </TableRow>
               );
             })}
+            {materials.length === 0 && (
+              <TableRow>
+                <TableCell colSpan={6} className="text-center text-muted-foreground py-8">Nenhum material cadastrado.</TableCell>
+              </TableRow>
+            )}
           </TableBody>
         </Table>
       </div>

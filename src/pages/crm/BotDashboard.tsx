@@ -1,21 +1,32 @@
-import { useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Users, Flame, UserCheck, Eye, MessageSquare, ArrowRightLeft } from "lucide-react";
-import { mockLeads, mockHandoffs, mockVisits } from "@/services/bot/mockData";
+import { Users, Flame, UserCheck, Eye, MessageSquare, ArrowRightLeft, Loader2 } from "lucide-react";
 import { ScoreBadge } from "@/components/crm/bot/ScoreBadge";
-import { StatusBadge } from "@/components/crm/bot/StatusBadge";
 import { FunnelChart } from "@/components/crm/bot/FunnelChart";
 import { useNavigate } from "react-router-dom";
+import { useBotLeads, useBotHandoffs, useBotVisits } from "@/hooks/useBotData";
 
 const BotDashboard = () => {
   const navigate = useNavigate();
-  const leads = mockLeads;
+  const { data: leads = [], isLoading: loadingLeads } = useBotLeads();
+  const { data: allHandoffs = [], isLoading: loadingHandoffs } = useBotHandoffs();
+  const { data: allVisits = [], isLoading: loadingVisits } = useBotVisits();
+
+  const isLoading = loadingLeads || loadingHandoffs || loadingVisits;
+
+  if (isLoading) {
+    return (
+      <div className="flex items-center justify-center py-20">
+        <Loader2 className="h-8 w-8 animate-spin text-primary" />
+      </div>
+    );
+  }
+
   const frios = leads.filter(l => l.score_classification === 'frio').length;
   const mornos = leads.filter(l => l.score_classification === 'morno').length;
   const quentes = leads.filter(l => l.score_classification === 'quente').length;
   const aguardando = leads.filter(l => l.attendance_status === 'aguardando_humano').length;
-  const visitasSolicitadas = mockVisits.filter(v => v.status === 'solicitada' || v.status === 'confirmada').length;
-  const handoffsPendentes = mockHandoffs.filter(h => h.status === 'pendente').length;
+  const visitasSolicitadas = allVisits.filter(v => v.status === 'solicitada' || v.status === 'confirmada').length;
+  const handoffsPendentes = allHandoffs.filter(h => h.status === 'pendente').length;
 
   const origens = leads.reduce((acc, l) => {
     const o = l.origin || 'Desconhecido';
@@ -39,7 +50,6 @@ const BotDashboard = () => {
         <p className="text-muted-foreground font-body text-sm">Pré-vendas Metropolitan Business Center</p>
       </div>
 
-      {/* KPI Cards */}
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
         {kpis.map((kpi) => (
           <Card key={kpi.title} className="bg-card border-border">
@@ -55,7 +65,6 @@ const BotDashboard = () => {
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Funnel */}
         <Card className="bg-card border-border lg:col-span-2">
           <CardHeader>
             <CardTitle className="font-display text-lg">Funil Conversacional</CardTitle>
@@ -65,16 +74,15 @@ const BotDashboard = () => {
           </CardContent>
         </Card>
 
-        {/* Score Distribution */}
         <Card className="bg-card border-border">
           <CardHeader>
             <CardTitle className="font-display text-lg">Classificação por Score</CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
             {[
-              { label: 'Frio (0-20)', count: frios, pct: (frios / leads.length) * 100, color: 'bg-sky-500' },
-              { label: 'Morno (21-50)', count: mornos, pct: (mornos / leads.length) * 100, color: 'bg-amber-500' },
-              { label: 'Quente (51+)', count: quentes, pct: (quentes / leads.length) * 100, color: 'bg-red-500' },
+              { label: 'Frio (0-20)', count: frios, pct: leads.length ? (frios / leads.length) * 100 : 0, color: 'bg-sky-500' },
+              { label: 'Morno (21-50)', count: mornos, pct: leads.length ? (mornos / leads.length) * 100 : 0, color: 'bg-amber-500' },
+              { label: 'Quente (51+)', count: quentes, pct: leads.length ? (quentes / leads.length) * 100 : 0, color: 'bg-red-500' },
             ].map((item) => (
               <div key={item.label}>
                 <div className="flex justify-between text-sm mb-1">
@@ -91,7 +99,6 @@ const BotDashboard = () => {
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Leads por Origem */}
         <Card className="bg-card border-border">
           <CardHeader>
             <CardTitle className="font-display text-lg">Leads por Origem</CardTitle>
@@ -104,11 +111,13 @@ const BotDashboard = () => {
                   <span className="text-sm font-bold text-foreground">{count}</span>
                 </div>
               ))}
+              {Object.keys(origens).length === 0 && (
+                <p className="text-sm text-muted-foreground text-center py-4">Nenhum lead cadastrado.</p>
+              )}
             </div>
           </CardContent>
         </Card>
 
-        {/* Leads Recentes */}
         <Card className="bg-card border-border">
           <CardHeader>
             <CardTitle className="font-display text-lg">Leads Recentes</CardTitle>
@@ -130,6 +139,9 @@ const BotDashboard = () => {
                   </div>
                 </div>
               ))}
+              {leads.length === 0 && (
+                <p className="text-sm text-muted-foreground text-center py-4">Nenhum lead cadastrado.</p>
+              )}
             </div>
           </CardContent>
         </Card>
