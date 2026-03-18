@@ -895,6 +895,55 @@ const server = createServer(async (req, res) => {
     }
   }
 
+  // ── Upload proxy: materials to Supabase Storage ──
+  if (url.pathname === "/api/webhook/upload" && req.method === "POST") {
+    try {
+      const contentType = req.headers["content-type"] || "";
+
+      // Expect multipart-like: read raw body
+      if (!contentType) {
+        return jsonResponse(res, 400, { error: "Missing Content-Type" });
+      }
+
+      const fileName = url.searchParams.get("filename") || `upload-${Date.now()}`;
+      const chunks = [];
+      for await (const chunk of req) chunks.push(chunk);
+      const body = Buffer.concat(chunks);
+
+      if (!body.length) {
+        return jsonResponse(res, 400, { error: "Empty body" });
+      }
+
+      // Upload to Supabase Storage via REST
+      const storagePath = `${Date.now()}-${fileName.replace(/[^a-zA-Z0-9._-]/g, "_")}`;
+      const uploadResp = await fetch(
+        `${SUPABASE_URL}/storage/v1/object/materials/${storagePath}`,
+        {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+            "Content-Type": contentType,
+            "x-upsert": "true",
+          },
+          body,
+        }
+      );
+
+      if (!uploadResp.ok) {
+        const errText = await uploadResp.text();
+        log("upload", "storage error", { status: uploadResp.status, error: errText });
+        return jsonResponse(res, 500, { error: `Storage error: ${errText}` });
+      }
+
+      const publicUrl = `${SUPABASE_URL}/storage/v1/object/public/materials/${storagePath}`;
+      log("upload", "file uploaded", { fileName, size: body.length, path: storagePath });
+      return jsonResponse(res, 200, { ok: true, url: publicUrl, path: storagePath });
+    } catch (err) {
+      log("upload", "error", { error: err.message });
+      return jsonResponse(res, 500, { error: err.message });
+    }
+  }
+
   // ── 404 ──
   jsonResponse(res, 404, { error: "Not found" });
 });

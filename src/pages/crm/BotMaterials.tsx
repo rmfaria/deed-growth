@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useRef } from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -8,9 +8,11 @@ import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
-import { Plus, FileText, Map, Video, Table2, BookOpen, ExternalLink, Pencil, Trash2, Loader2 } from "lucide-react";
+import { Progress } from "@/components/ui/progress";
+import { Plus, FileText, Map, Video, Table2, BookOpen, ExternalLink, Pencil, Trash2, Loader2, Upload, CheckCircle2 } from "lucide-react";
 import { useBotMaterials } from "@/hooks/useBotData";
 import { useCreateMaterial, useUpdateMaterial, useDeleteMaterial } from "@/hooks/useBotActions";
+import { toast } from "sonner";
 import type { MaterialType, BotMaterial } from "@/services/bot/types";
 
 const typeIcons: Record<MaterialType, React.ElementType> = {
@@ -36,6 +38,10 @@ const BotMaterials = () => {
   const [formType, setFormType] = useState<string>("pdf");
   const [formUrl, setFormUrl] = useState("");
   const [formCategory, setFormCategory] = useState("");
+  const [uploading, setUploading] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState(0);
+  const [uploadedFileName, setUploadedFileName] = useState("");
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const openCreate = () => {
     setEditing(null);
@@ -43,6 +49,8 @@ const BotMaterials = () => {
     setFormType("pdf");
     setFormUrl("");
     setFormCategory("");
+    setUploadedFileName("");
+    setUploadProgress(0);
     setShowForm(true);
   };
 
@@ -52,7 +60,70 @@ const BotMaterials = () => {
     setFormType(mat.type);
     setFormUrl(mat.url || "");
     setFormCategory(mat.category || "");
+    setUploadedFileName("");
+    setUploadProgress(0);
     setShowForm(true);
+  };
+
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const maxSize = 50 * 1024 * 1024; // 50MB
+    if (file.size > maxSize) {
+      toast.error("Arquivo muito grande. Limite: 50MB.");
+      return;
+    }
+
+    setUploading(true);
+    setUploadProgress(10);
+
+    try {
+      const ext = file.name.split(".").pop()?.toLowerCase() || "bin";
+
+      setUploadProgress(30);
+
+      // Upload via engine proxy (uses service_role key server-side)
+      const res = await fetch(
+        `https://prod.nesecurity.com.br/mbc/api/webhook/upload?filename=${encodeURIComponent(file.name)}`,
+        {
+          method: "POST",
+          headers: { "Content-Type": file.type || "application/octet-stream" },
+          body: file,
+        }
+      );
+
+      setUploadProgress(80);
+
+      const result = await res.json();
+      if (!result.ok) throw new Error(result.error || "Upload failed");
+
+      setFormUrl(result.url);
+      setUploadedFileName(file.name);
+      setUploadProgress(100);
+
+      if (!formName.trim()) {
+        setFormName(file.name.replace(/\.[^.]+$/, ""));
+      }
+
+      // Auto-detect type from extension
+      const typeMap: Record<string, string> = {
+        mp4: "video", mov: "video", avi: "video", webm: "video",
+        pdf: "pdf",
+        jpg: "mapa", jpeg: "mapa", png: "mapa", webp: "mapa",
+        xls: "tabela", xlsx: "tabela", csv: "tabela",
+      };
+      if (typeMap[ext]) setFormType(typeMap[ext]);
+
+      toast.success("Arquivo enviado com sucesso!");
+    } catch (err: any) {
+      console.error(err);
+      toast.error(`Erro no upload: ${err.message || "falha desconhecida"}`);
+      setUploadProgress(0);
+    } finally {
+      setUploading(false);
+      if (fileInputRef.current) fileInputRef.current.value = "";
+    }
   };
 
   const handleSave = () => {
@@ -190,9 +261,39 @@ const BotMaterials = () => {
                 </SelectContent>
               </Select>
             </div>
-            <div>
-              <Label>URL do arquivo</Label>
-              <Input value={formUrl} onChange={(e) => setFormUrl(e.target.value)} placeholder="https://..." className="mt-1.5" />
+            <div className="space-y-2">
+              <Label>Arquivo</Label>
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="video/*,image/*,application/pdf,.xls,.xlsx,.csv"
+                className="hidden"
+                onChange={handleFileUpload}
+              />
+              <div className="flex gap-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="gap-2 flex-1"
+                  onClick={() => fileInputRef.current?.click()}
+                  disabled={uploading}
+                >
+                  {uploading ? <Loader2 size={14} className="animate-spin" /> : <Upload size={14} />}
+                  {uploading ? "Enviando..." : "Upload de Arquivo"}
+                </Button>
+              </div>
+              {uploading && <Progress value={uploadProgress} className="h-2" />}
+              {uploadedFileName && !uploading && (
+                <div className="flex items-center gap-2 text-xs text-emerald-600">
+                  <CheckCircle2 size={14} />
+                  <span>{uploadedFileName}</span>
+                </div>
+              )}
+              <div>
+                <Label className="text-xs text-muted-foreground">Ou cole a URL diretamente</Label>
+                <Input value={formUrl} onChange={(e) => setFormUrl(e.target.value)} placeholder="https://..." className="mt-1" />
+              </div>
+              <p className="text-xs text-muted-foreground">Formatos: PDF, imagens, vídeos (MP4). Limite: 50MB.</p>
             </div>
             <div>
               <Label>Categoria</Label>
