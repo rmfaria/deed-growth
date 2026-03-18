@@ -13,10 +13,19 @@ import {
   Send, Image, Video, FileText, Loader2, CheckCircle2, XCircle,
   Phone, ScrollText, Users, User, Search, Square, CheckSquare, StopCircle,
 } from "lucide-react";
-import { useBotLeads, useBotConfig } from "@/hooks/useBotData";
+import { useBotLeads, useBotConfig, useBotMaterials } from "@/hooks/useBotData";
 import { ScoreBadge } from "@/components/crm/bot/ScoreBadge";
 import { toast } from "sonner";
-import type { BotLead } from "@/services/bot/types";
+import type { BotLead, BotMaterial } from "@/services/bot/types";
+
+const MEDIA_TYPE_MAP: Record<string, string> = {
+  video: "video",
+  apresentacao: "document",
+  planta: "document",
+  mapa: "image",
+  tabela: "document",
+  pdf: "document",
+};
 
 const ENGINE_BASE = "https://prod.nesecurity.com.br/mbc/api/webhook";
 
@@ -90,6 +99,8 @@ interface BatchProgress {
 const BotSend = () => {
   const { data: leads = [] } = useBotLeads();
   const { data: botConfig } = useBotConfig();
+  const { data: materials = [] } = useBotMaterials();
+  const activeMaterials = materials.filter((m) => m.is_active && m.url && !m.url.includes("example.com"));
 
   // Mode
   const [sendMode, setSendMode] = useState<SendMode>("single");
@@ -559,6 +570,22 @@ const BotSend = () => {
             {/* Imagem — single only */}
             {sendMode === "single" && (
               <TabsContent value="image" className="space-y-4">
+                {activeMaterials.filter((m) => m.type === "mapa").length > 0 && (
+                  <div>
+                    <Label>Material publicado</Label>
+                    <Select onValueChange={(id) => {
+                      const mat = activeMaterials.find((m) => m.id === id);
+                      if (mat?.url) { setMediaUrl(mat.url); setMediaType("image"); setCaption(mat.name); }
+                    }}>
+                      <SelectTrigger className="mt-1.5"><SelectValue placeholder="Selecionar material..." /></SelectTrigger>
+                      <SelectContent>
+                        {activeMaterials.filter((m) => m.type === "mapa").map((m) => (
+                          <SelectItem key={m.id} value={m.id}>{m.name}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                )}
                 <div>
                   <Label>URL da imagem</Label>
                   <Input
@@ -595,6 +622,22 @@ const BotSend = () => {
             {/* Vídeo — single only */}
             {sendMode === "single" && (
               <TabsContent value="video" className="space-y-4">
+                {activeMaterials.filter((m) => m.type === "video").length > 0 && (
+                  <div>
+                    <Label>Material publicado</Label>
+                    <Select onValueChange={(id) => {
+                      const mat = activeMaterials.find((m) => m.id === id);
+                      if (mat?.url) { setMediaUrl(mat.url); setMediaType("video"); setCaption(mat.name); }
+                    }}>
+                      <SelectTrigger className="mt-1.5"><SelectValue placeholder="Selecionar vídeo publicado..." /></SelectTrigger>
+                      <SelectContent>
+                        {activeMaterials.filter((m) => m.type === "video").map((m) => (
+                          <SelectItem key={m.id} value={m.id}>{m.name}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                )}
                 <div>
                   <Label>URL do vídeo</Label>
                   <Input
@@ -626,6 +669,22 @@ const BotSend = () => {
             {/* Documento — single only */}
             {sendMode === "single" && (
               <TabsContent value="document" className="space-y-4">
+                {activeMaterials.filter((m) => ["apresentacao", "planta", "tabela", "pdf"].includes(m.type)).length > 0 && (
+                  <div>
+                    <Label>Material publicado</Label>
+                    <Select onValueChange={(id) => {
+                      const mat = activeMaterials.find((m) => m.id === id);
+                      if (mat?.url) { setMediaUrl(mat.url); setMediaType("document"); setCaption(mat.name); }
+                    }}>
+                      <SelectTrigger className="mt-1.5"><SelectValue placeholder="Selecionar documento publicado..." /></SelectTrigger>
+                      <SelectContent>
+                        {activeMaterials.filter((m) => ["apresentacao", "planta", "tabela", "pdf"].includes(m.type)).map((m) => (
+                          <SelectItem key={m.id} value={m.id}>{m.name} ({m.type})</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                )}
                 <div>
                   <Label>URL do documento</Label>
                   <Input
