@@ -618,7 +618,7 @@ const openclawWebhookReceiver = {
           // Send materials — determine types explicitly
           const materialTypes = [];
           if (wantsPlanta) materialTypes.push("planta");
-          if (wantsMaterial) materialTypes.push("apresentacao", "pdf");
+          if (wantsMaterial) materialTypes.push("apresentacao", "pdf", "video");
           updates._dispatchMaterialTypes = materialTypes;
           updates.conversation_state = "POS_CONVERSAO";
           botResponse = "Perfeito! Estou enviando o material para você. Qualquer dúvida, estou à disposição.";
