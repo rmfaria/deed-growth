@@ -10,7 +10,6 @@ import { Badge } from "@/components/ui/badge";
 import { Save, Loader2, RefreshCw, CheckCircle2, XCircle, Circle, Plus, Trash2 } from "lucide-react";
 import { SCORE_RULES } from "@/services/bot/types";
 import { useBotConfig } from "@/hooks/useBotData";
-import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 
 const BotSettings = () => {
@@ -78,12 +77,13 @@ const BotSettings = () => {
     ];
 
     try {
-      for (const entry of entries) {
-        const { error } = await supabase
-          .from("bot_config")
-          .upsert({ key: entry.key, value: JSON.stringify(entry.value) }, { onConflict: 'key' });
-        if (error) throw error;
-      }
+      const resp = await fetch("https://prod.nesecurity.com.br/mbc/api/webhook/config", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ entries }),
+      });
+      const result = await resp.json();
+      if (!result.ok) throw new Error(result.error || "Falha ao salvar");
       toast.success("Configurações salvas com sucesso!");
     } catch (err) {
       toast.error("Erro ao salvar configurações.");

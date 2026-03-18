@@ -936,6 +936,35 @@ const server = createServer(async (req, res) => {
     }
   }
 
+  // ── Config API: read/write bot_config (bypasses RLS) ──
+  if (url.pathname === "/api/webhook/config" && req.method === "GET") {
+    try {
+      const config = await loadBotConfig();
+      return jsonResponse(res, 200, { ok: true, config });
+    } catch (err) {
+      return jsonResponse(res, 500, { error: err.message });
+    }
+  }
+
+  if (url.pathname === "/api/webhook/config" && req.method === "POST") {
+    try {
+      const body = await readBody(req);
+      const entries = body.entries || [];
+      for (const entry of entries) {
+        const existing = await supabase.selectOne("bot_config", { key: entry.key });
+        if (existing && !existing.code) {
+          await supabase.update("bot_config", { key: entry.key }, { value: JSON.stringify(entry.value) });
+        } else {
+          await supabase.insert("bot_config", { key: entry.key, value: JSON.stringify(entry.value) });
+        }
+      }
+      _configLoadedAt = 0; // bust cache
+      return jsonResponse(res, 200, { ok: true, saved: entries.length });
+    } catch (err) {
+      return jsonResponse(res, 500, { error: err.message });
+    }
+  }
+
   // ── Upload proxy: materials to Supabase Storage ──
   if (url.pathname === "/api/webhook/upload" && req.method === "POST") {
     try {

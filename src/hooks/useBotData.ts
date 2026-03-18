@@ -145,15 +145,10 @@ export function useBotConfig() {
   return useQuery({
     queryKey: ["bot-config"],
     queryFn: async () => {
-      const { data, error } = await supabase
-        .from("bot_config")
-        .select("*");
-      if (error) throw error;
-      const config: Record<string, any> = {};
-      (data ?? []).forEach((row: any) => {
-        config[row.key] = row.value;
-      });
-      return config;
+      const resp = await fetch("https://prod.nesecurity.com.br/mbc/api/webhook/config");
+      if (!resp.ok) throw new Error("Failed to load config");
+      const result = await resp.json();
+      return (result.config || {}) as Record<string, any>;
     },
   });
 }
