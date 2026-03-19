@@ -684,13 +684,16 @@ const leadScoringService = {
     const events = [];
     const lower = text.toLowerCase();
 
-    if (this.detectProfile(text) && !lead.profile_type) events.push("perfil_respondido");
+    if (this.detectProfile(text) && (!lead.profile_type || lead.profile_type === "indefinido")) events.push("perfil_respondido");
     if (this.detectObjective(text) && !lead.objective) events.push("objetivo_informado");
     if (this.detectArea(text) && !lead.desired_area) events.push("metragem_informada");
     if (/material|apresentação|book|brochura/.test(lower)) events.push("material_solicitado");
     if (/planta/.test(lower)) events.push("planta_solicitada");
     if (/visita|conhecer|ir até|ver pessoalmente/.test(lower)) events.push("visita_aceita");
     if (/proposta|orçamento|simulação/.test(lower)) events.push("proposta_solicitada");
+    if (/constru|galpão|edificar/.test(lower)) events.push("interesse_construcao");
+    if (/preço|valor|quanto|custa|parcela|entrada/.test(lower)) events.push("pergunta_preco");
+    if (/onde fica|localiza|como chegar|endereço|mapa/.test(lower)) events.push("pergunta_localizacao");
 
     return events;
   },
