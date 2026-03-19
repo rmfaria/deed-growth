@@ -1122,11 +1122,47 @@ const openclawWebhookReceiver = {
     const prevMedia = await supabase.selectManyRaw("bot_messages", `lead_id=eq.${lead.id}&message_type=neq.text&limit=1&select=id`);
     const materialsAlreadySent = prevMedia.length > 0;
 
+    // ── M5: Regex intent classifier (guardrail semântico leve) ──
+    const lower = message.toLowerCase();
+    const isHostile = /porra|merda|idiota|burro|lixo|vai se|fdp|caralho|puta/i.test(lower);
+    const isOffTopic = /político|eleição|bolsonaro|lula|futebol|flamengo|palmeiras|corinthians|religião|igreja|bitcoin|crypto/i.test(lower);
+
+    if (isHostile || isOffTopic) {
+      const deflectResponse = isHostile
+        ? "Estou aqui para te ajudar com o MBC! Se precisar de informações sobre lotes ou condições, é só falar."
+        : "Entendo sua curiosidade! Mas meu foco é te ajudar com o Metropolitan Business Center. Posso te contar sobre os lotes, condições ou agendar uma visita?";
+
+      await supabase.insert("bot_messages", { lead_id: lead.id, direction: "outbound", content: deflectResponse, message_type: "text" });
+      await supabase.update("bot_leads", { id: lead.id }, updates);
+      await whatsappMessageService.sendText(phone, deflectResponse);
+      log("intentClassifier", isHostile ? "hostile" : "off_topic", { phone });
+      return { status: 200, body: { status: "deflected", lead_id: lead.id, reason: isHostile ? "hostile" : "off_topic" } };
+    }
+
     // ── Determine bot response ──
     const handoff = handoffRouterService.needsHandoff(message, newScore);
     let botResponse;
     let dispatchMaterialTypes = null;
-    const llmEnabled = getConfig("llm_enabled", false) && getConfig("llm_api_key", "");
+    // M6: A/B testing — determine if this lead should use LLM
+    const llmGlobalEnabled = getConfig("llm_enabled", false) && getConfig("llm_api_key", "");
+    const abTestEnabled = getConfig("ab_test_enabled", false);
+    const abTestPercentage = Number(getConfig("ab_test_llm_percentage", 20));
+    let llmEnabled = false;
+
+    if (llmGlobalEnabled) {
+      if (abTestEnabled) {
+        // Deterministic hash: same phone always gets same group
+        let hash = 0;
+        for (let i = 0; i < phone.length; i++) {
+          hash = ((hash << 5) - hash) + phone.charCodeAt(i);
+          hash |= 0;
+        }
+        llmEnabled = (Math.abs(hash) % 100) < abTestPercentage;
+        if (llmEnabled) log("abTest", "lead in LLM group", { phone, hash: Math.abs(hash) % 100, threshold: abTestPercentage });
+      } else {
+        llmEnabled = true; // no A/B, use global toggle
+      }
+    }
 
     if (handoff.needed) {
       // ── Handoff ──

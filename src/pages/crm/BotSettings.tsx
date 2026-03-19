@@ -38,6 +38,8 @@ const BotSettings = () => {
   const [llmMaxHistory, setLlmMaxHistory] = useState(20);
   const [llmMaxResponseLength, setLlmMaxResponseLength] = useState(500);
   const [llmTemperature, setLlmTemperature] = useState(0.7);
+  const [abTestEnabled, setAbTestEnabled] = useState(false);
+  const [abTestPercentage, setAbTestPercentage] = useState(20);
   const [attendants, setAttendants] = useState<{ name: string; phone: string }[]>([{ name: "", phone: "" }]);
   const [saving, setSaving] = useState(false);
   const [engineStatus, setEngineStatus] = useState<any>(null);
@@ -79,6 +81,8 @@ const BotSettings = () => {
       if (config.llm_max_history !== undefined) setLlmMaxHistory(Number(config.llm_max_history) || 20);
       if (config.llm_max_response_length !== undefined) setLlmMaxResponseLength(Number(config.llm_max_response_length) || 500);
       if (config.llm_temperature !== undefined) setLlmTemperature(Number(config.llm_temperature) || 0.7);
+      if (config.ab_test_enabled !== undefined) setAbTestEnabled(!!config.ab_test_enabled);
+      if (config.ab_test_llm_percentage !== undefined) setAbTestPercentage(Number(config.ab_test_llm_percentage) || 20);
       if (config.attendants) {
         const atts = config.attendants as { name: string; phone: string }[];
         setAttendants(atts.length > 0 ? atts : [{ name: "", phone: "" }]);
@@ -105,6 +109,8 @@ const BotSettings = () => {
       { key: 'llm_max_history', value: llmMaxHistory },
       { key: 'llm_max_response_length', value: llmMaxResponseLength },
       { key: 'llm_temperature', value: llmTemperature },
+      { key: 'ab_test_enabled', value: abTestEnabled },
+      { key: 'ab_test_llm_percentage', value: abTestPercentage },
       { key: 'attendants', value: attendants.filter(a => a.name.trim() && a.phone.trim()) },
     ];
 
@@ -290,9 +296,32 @@ const BotSettings = () => {
                 <p className="text-xs text-muted-foreground mt-1">0=preciso, 1=criativo</p>
               </div>
             </div>
+            <Separator />
+            <div>
+              <div className="flex items-center justify-between">
+                <div>
+                  <Label>A/B Testing</Label>
+                  <p className="text-xs text-muted-foreground">Ativar IA gradualmente para uma porcentagem dos leads</p>
+                </div>
+                <Switch checked={abTestEnabled} onCheckedChange={setAbTestEnabled} />
+              </div>
+              {abTestEnabled && (
+                <div className="flex items-center gap-3 mt-3">
+                  <Input
+                    type="number"
+                    min={1}
+                    max={100}
+                    value={abTestPercentage}
+                    onChange={(e) => setAbTestPercentage(parseInt(e.target.value) || 20)}
+                    className="w-20"
+                  />
+                  <span className="text-sm text-muted-foreground">% dos leads usam IA (resto usa fluxo fixo)</span>
+                </div>
+              )}
+            </div>
             <div className="p-3 rounded-lg bg-amber-500/10 border border-amber-500/30">
               <p className="text-xs text-amber-600 font-medium">
-                Guardrails ativos: detecção de loop (3 respostas iguais → fallback), timeout 10s, rate limit 2s/msg, fallback automático para fluxo fixo em caso de erro.
+                Guardrails ativos: anti-repetição persistente, loop detection via DB, timeout 15s, rate limit 2s/msg, cooldown progressivo (30min/2h/8h), classificador de intent (regex), fallback automático para fluxo fixo.
               </p>
             </div>
           </CardContent>
