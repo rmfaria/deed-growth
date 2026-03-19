@@ -964,8 +964,11 @@ const openclawWebhookReceiver = {
 
     // ── Scoring: detect events from message ──
     const scoreEvents = leadScoringService.detectScoreEvents(message, lead);
-    const newPoints = await leadScoringService.persistScoreEvents(lead.id, scoreEvents);
-    const newScore = lead.score + newPoints;
+    await leadScoringService.persistScoreEvents(lead.id, scoreEvents);
+
+    // Calculate score from source of truth (score_events table) to avoid race conditions
+    const allEvents = await supabase.selectManyRaw("score_events", `lead_id=eq.${lead.id}&select=points`);
+    const newScore = allEvents.reduce((sum, e) => sum + (e.points || 0), 0);
     const classification = leadScoringService.classifyScore(newScore);
 
     // ── Build lead updates ──
