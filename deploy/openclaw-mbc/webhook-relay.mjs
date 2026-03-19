@@ -307,36 +307,47 @@ const LLM_PROVIDERS = {
 };
 
 const guardrails = {
-  _recentResponses: new Map(), // leadId → [last 3 responses]
-  _lastCallTime: new Map(),    // leadId → timestamp
-  _failCount: new Map(),       // leadId → consecutive failures
+  _lastCallTime: new Map(),    // leadId → timestamp (rate limit, ok in memory)
+  _failCooldowns: new Map(),   // leadId → { count, disabledUntil }
 
   checkRateLimit(leadId) {
     const last = this._lastCallTime.get(leadId) || 0;
-    if (Date.now() - last < 2000) return true; // too soon
+    if (Date.now() - last < 2000) return true;
     this._lastCallTime.set(leadId, Date.now());
     return false;
   },
 
-  detectLoop(leadId, newResponse) {
-    const recent = this._recentResponses.get(leadId) || [];
-    const normalize = (s) => (s || "").toLowerCase().replace(/[!?.,\s]+/g, " ").trim();
-    const newNorm = normalize(newResponse);
-    // Check similarity: same first 5 words OR >70% overlap with any recent
-    const newWords = newNorm.split(" ").slice(0, 8).join(" ");
-    const isLoop = recent.some((r) => {
-      const rNorm = normalize(r);
-      const rWords = rNorm.split(" ").slice(0, 8).join(" ");
-      // Same opening words
-      if (newWords === rWords) return true;
-      // High overlap: both start with greeting-like pattern
-      if (/^(oi|olá|ola|como|tudo)/.test(newWords) && /^(oi|olá|ola|como|tudo)/.test(rWords)) return true;
-      return false;
-    });
-    recent.push(newResponse || "");
-    if (recent.length > 5) recent.shift();
-    this._recentResponses.set(leadId, recent);
-    return isLoop;
+  // M2: Loop detection using bot_messages (persistent, survives restarts)
+  async detectLoop(leadId, newResponse) {
+    try {
+      const recentOutbound = await supabase.selectManyRaw(
+        "bot_messages",
+        `lead_id=eq.${leadId}&direction=eq.outbound&order=created_at.desc&limit=5&select=content`
+      );
+      const normalize = (s) => (s || "").toLowerCase().replace(/[!?.,\s]+/g, " ").trim();
+      const newWords = normalize(newResponse).split(" ").slice(0, 8).join(" ");
+      return recentOutbound.some((r) => {
+        const rWords = normalize(r.content).split(" ").slice(0, 8).join(" ");
+        if (newWords === rWords) return true;
+        if (/^(oi|olá|ola|como|tudo)/.test(newWords) && /^(oi|olá|ola|como|tudo)/.test(rWords)) return true;
+        return false;
+      });
+    } catch {
+      return false; // if query fails, don't block
+    }
+  },
+
+  // M2: Get recent responses from DB for anti-repetition in system prompt
+  async getRecentResponses(leadId) {
+    try {
+      const rows = await supabase.selectManyRaw(
+        "bot_messages",
+        `lead_id=eq.${leadId}&direction=eq.outbound&order=created_at.desc&limit=3&select=content`
+      );
+      return rows.map((r) => (r.content || "").slice(0, 100));
+    } catch {
+      return [];
+    }
   },
 
   truncateAtSentence(text, maxLen) {
@@ -393,29 +404,86 @@ const guardrails = {
     return { ...empty, text: raw.replace(/```json|```/g, "").trim() };
   },
 
+  // M4: Failure tracking with progressive cooldown
   recordFailure(leadId) {
-    const count = (this._failCount.get(leadId) || 0) + 1;
-    this._failCount.set(leadId, count);
-    return count >= 3; // disable LLM for this lead after 3 failures
+    const entry = this._failCooldowns.get(leadId) || { count: 0, disabledUntil: 0 };
+    entry.count++;
+    if (entry.count >= 3) {
+      // Progressive cooldown: 30min, 2h, 8h
+      const cooldownMs = [30, 120, 480][Math.min(entry.count - 3, 2)] * 60_000;
+      entry.disabledUntil = Date.now() + cooldownMs;
+      log("guardrails", `LLM cooldown for lead ${leadId}`, { failures: entry.count, cooldownMin: cooldownMs / 60_000 });
+    }
+    this._failCooldowns.set(leadId, entry);
+    return entry.count >= 3;
   },
 
   recordSuccess(leadId) {
-    this._failCount.delete(leadId);
+    this._failCooldowns.delete(leadId);
   },
 
   isDisabled(leadId) {
-    return (this._failCount.get(leadId) || 0) >= 3;
+    const entry = this._failCooldowns.get(leadId);
+    if (!entry) return false;
+    if (entry.count < 3) return false;
+    // Check if cooldown expired
+    if (entry.disabledUntil && Date.now() > entry.disabledUntil) {
+      entry.count = 0;
+      entry.disabledUntil = 0;
+      this._failCooldowns.set(leadId, entry);
+      return false; // cooldown expired, allow LLM again
+    }
+    return true;
   },
 };
 
 const llmConversationService = {
+  // M3: Smart truncation — keep first 3 messages (context) + last N (recent)
   async loadHistory(leadId, maxMessages) {
-    const qs = `lead_id=eq.${leadId}&order=created_at.desc&limit=${maxMessages}&select=direction,content,created_at`;
-    const rows = await supabase.selectManyRaw("bot_messages", qs);
-    return rows.reverse().map((r) => ({
+    const contextWindow = 3; // always keep first N messages
+
+    // Get first messages (lead introduction context)
+    const firstRows = await supabase.selectManyRaw(
+      "bot_messages",
+      `lead_id=eq.${leadId}&order=created_at.asc&limit=${contextWindow}&select=direction,content,created_at`
+    );
+
+    // Get recent messages
+    const recentLimit = maxMessages - contextWindow;
+    const recentRows = await supabase.selectManyRaw(
+      "bot_messages",
+      `lead_id=eq.${leadId}&order=created_at.desc&limit=${recentLimit}&select=direction,content,created_at`
+    );
+    recentRows.reverse();
+
+    // If conversation is short, just return all
+    const totalEstimate = firstRows.length + recentRows.length;
+    if (totalEstimate <= maxMessages) {
+      // Deduplicate (some messages may overlap)
+      const seen = new Set();
+      const all = [...firstRows, ...recentRows].filter((r) => {
+        const key = r.created_at;
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      });
+      return all.map((r) => ({
+        role: r.direction === "inbound" ? "user" : "assistant",
+        content: r.content,
+      }));
+    }
+
+    // Long conversation: first 3 + gap marker + last N
+    const format = (r) => ({
       role: r.direction === "inbound" ? "user" : "assistant",
       content: r.content,
-    }));
+    });
+
+    return [
+      ...firstRows.map(format),
+      { role: "system", content: "[... mensagens anteriores omitidas ...]" },
+      ...recentRows.map(format),
+    ];
   },
 
   async buildSystemPrompt(lead, template) {
@@ -443,12 +511,12 @@ const llmConversationService = {
       }
     } catch {}
 
-    // Anti-repetition context
-    const recent = guardrails._recentResponses.get(lead.id) || [];
+    // M2: Anti-repetition from DB (persistent, survives restarts)
+    const recent = await guardrails.getRecentResponses(lead.id);
     if (recent.length > 0) {
       prompt += `\n## SUAS ULTIMAS RESPOSTAS (NAO REPITA)\n`;
-      recent.slice(-3).forEach((r, i) => {
-        prompt += `${i + 1}. "${(r || "").slice(0, 100)}"\n`;
+      recent.forEach((r, i) => {
+        prompt += `${i + 1}. "${r}"\n`;
       });
       prompt += `\nVarie completamente sua abordagem. Avance a conversa, nao fique repetindo saudacoes.\n`;
     }
@@ -604,7 +672,7 @@ const llmConversationService = {
     parsed.text = guardrails.truncateAtSentence(parsed.text, maxLen);
 
     // Loop detection
-    if (guardrails.detectLoop(leadId, parsed.text)) {
+    if (await guardrails.detectLoop(leadId, parsed.text)) {
       guardrails.recordFailure(leadId);
       throw new Error("Loop detected — same response repeated");
     }
