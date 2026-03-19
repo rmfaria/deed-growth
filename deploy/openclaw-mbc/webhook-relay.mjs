@@ -752,6 +752,40 @@ const handoffRouterService = {
       status: "pendente",
     });
     log("handoffRouter", "handoff created", { leadId, reason });
+
+    // Notify all configured attendants via WhatsApp
+    try {
+      const attendants = getConfig("attendants", []);
+      if (Array.isArray(attendants) && attendants.length > 0) {
+        const lead = await supabase.selectOne("bot_leads", { id: leadId });
+        const leadName = lead?.name || "Lead";
+        const leadPhone = lead?.phone || "";
+        const leadOrigin = lead?.origin || "WhatsApp";
+        const leadScore = lead?.score || 0;
+        const leadProfile = lead?.profile_type || "indefinido";
+        const waLink = `https://wa.me/${leadPhone.replace(/[^0-9]/g, "")}`;
+
+        const msg =
+          `🔔 *Transferência Automática*\n\n` +
+          `*Cliente:* ${leadName}\n` +
+          `*Telefone:* ${leadPhone}\n` +
+          `*Campanha:* ${leadOrigin}\n` +
+          `*Score:* ${leadScore} (${lead?.score_classification || "frio"})\n` +
+          `*Perfil:* ${leadProfile}\n` +
+          `*Motivo:* ${reason}\n\n` +
+          `👉 Abrir conversa: ${waLink}`;
+
+        for (const att of attendants) {
+          const attPhone = (att.phone || "").replace(/[^0-9]/g, "");
+          if (attPhone) {
+            await whatsappMessageService.sendText(attPhone, msg);
+          }
+        }
+        log("handoffRouter", "attendants notified", { count: attendants.length, leadId });
+      }
+    } catch (err) {
+      log("handoffRouter", "notify error (non-fatal)", { error: err.message });
+    }
   },
 };
 
