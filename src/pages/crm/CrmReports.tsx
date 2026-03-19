@@ -189,14 +189,16 @@ const CrmReports = () => {
   }, [botLeads]);
 
   // 4. Funnel: conversation state progression
+  // Funnel: only leads that had interaction (last_message_at != null)
+  const interactedLeads = botLeads.filter((l) => l.last_message_at);
   const funnelData = useMemo(() => {
     const counts: Record<string, number> = {};
-    botLeads.forEach((l) => { counts[l.conversation_state] = (counts[l.conversation_state] || 0) + 1; });
+    interactedLeads.forEach((l) => { counts[l.conversation_state] = (counts[l.conversation_state] || 0) + 1; });
     return FLOW_STAGES.map((stage) => ({
       name: stage.label,
       leads: counts[stage.key] || 0,
     }));
-  }, [botLeads]);
+  }, [interactedLeads]);
 
   // 5. Leads over time (by created_at, grouped by day)
   const leadsOverTime = useMemo(() => {
@@ -436,7 +438,7 @@ const CrmReports = () => {
       <Card className="bg-card border-border">
         <CardHeader>
           <CardTitle className="font-display text-base">Funil de Conversão do Bot</CardTitle>
-          <CardDescription>Leads por etapa do fluxo de conversa</CardDescription>
+          <CardDescription>Leads que interagiram, por etapa do fluxo ({interactedLeads.length} de {botLeads.length})</CardDescription>
         </CardHeader>
         <CardContent>
           <div className="space-y-2">
