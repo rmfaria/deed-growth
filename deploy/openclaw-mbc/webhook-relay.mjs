@@ -953,8 +953,36 @@ const openclawWebhookReceiver = {
     }
     global._lastResponseTime.set(phone, Date.now());
 
-    // ── Skip if already handled by human ──
-    if (["em_atendimento", "atendido", "encerrado"].includes(lead.attendance_status)) {
+    // ── Auto-reactivate leads that were in trash/encerrado ──
+    if (lead.attendance_status === "encerrado") {
+      log("webhookReceiver", "reactivating lead from trash", { leadId: lead.id, phone });
+      await supabase.update("bot_leads", { id: lead.id }, {
+        attendance_status: "bot",
+        conversation_state: "START",
+        human_handoff: false,
+        handoff_reason: null,
+      });
+      lead.attendance_status = "bot";
+      lead.conversation_state = "START";
+      lead.human_handoff = false;
+    }
+
+    // ── Auto-reactivate leads stuck in aguardando_humano ──
+    if (lead.attendance_status === "aguardando_humano") {
+      log("webhookReceiver", "reactivating lead from handoff", { leadId: lead.id, phone });
+      await supabase.update("bot_leads", { id: lead.id }, {
+        attendance_status: "bot",
+        conversation_state: "START",
+        human_handoff: false,
+        handoff_reason: null,
+      });
+      lead.attendance_status = "bot";
+      lead.conversation_state = "START";
+      lead.human_handoff = false;
+    }
+
+    // ── Skip only if actively being handled by human ──
+    if (["em_atendimento", "atendido"].includes(lead.attendance_status)) {
       log("webhookReceiver", "skipped — human handling", { leadId: lead.id });
       return {
         status: 200,
@@ -1563,15 +1591,13 @@ server.listen(PORT, "0.0.0.0", () => {
 
       if (!Array.isArray(staleLeads) || staleLeads.length === 0) return;
 
-      // Reset them
+      // Reset conversation state but KEEP score (score is historical, don't zero it)
       const resetUrl = `${SUPABASE_URL}/rest/v1/bot_leads?conversation_state=neq.START&conversation_state=neq.ENCERRADO&attendance_status=neq.encerrado&last_message_at=lt.${cutoff}`;
       await fetch(resetUrl, {
         method: "PATCH",
         headers: { ...headers, "Content-Type": "application/json", Prefer: "return=minimal" },
         body: JSON.stringify({
           conversation_state: "START",
-          score: 0,
-          score_classification: "frio",
           attendance_status: "bot",
           human_handoff: false,
           handoff_reason: null,
