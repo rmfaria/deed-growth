@@ -266,11 +266,34 @@ Quando o lead demonstrar intencao clara, inclua UMA acao no JSON:
 - "schedule_visit": lead quer visitar, conhecer, ir ate la, agendar visita
 - "transfer_human": lead quer proposta personalizada, negociar desconto, condicao especial, falar com consultor/atendente
 
+## QUALIFICACAO DO LEAD (score_events)
+Analise a mensagem do lead e inclua no JSON um array "score_events" com os eventos detectados nesta mensagem. Inclua APENAS eventos que realmente ocorreram NESTA mensagem, nao repita eventos de mensagens anteriores.
+Eventos possiveis:
+- "perfil_respondido": lead revelou se e empresa ou investidor
+- "objetivo_informado": lead disse o que pretende fazer (galpao, CD, sede, investir, etc)
+- "metragem_informada": lead mencionou area desejada (ex: 1000m2, 2000m2)
+- "material_solicitado": lead pediu ou aceitou material/apresentacao/book
+- "planta_solicitada": lead pediu planta
+- "visita_aceita": lead quer visitar ou agendar visita
+- "proposta_solicitada": lead pediu proposta, orcamento ou simulacao
+- "interesse_construcao": lead mencionou construir galpao ou edificar
+- "pergunta_preco": lead perguntou sobre valores, precos ou condicoes
+- "pergunta_localizacao": lead perguntou onde fica, como chegar
+- "engajamento_alto": lead fez 2+ perguntas na mesma mensagem ou demonstrou entusiasmo claro
+
+Se nenhum evento foi detectado, envie array vazio [].
+
+Inclua tambem:
+- "detected_profile": "empresa" ou "investimento" ou null (se detectou o perfil do lead)
+- "detected_objective": descricao curta do objetivo ou null
+- "detected_area": metragem mencionada ou null
+
 ## FORMATO DE RESPOSTA (OBRIGATORIO)
 Responda SEMPRE em JSON valido, nada mais:
-{"text": "sua resposta aqui", "action": null}
-ou com acao:
-{"text": "Perfeito! Estou enviando o material completo para voce.", "action": "send_material"}`;
+{"text": "sua resposta aqui", "action": null, "score_events": [], "detected_profile": null, "detected_objective": null, "detected_area": null}
+
+Exemplo com eventos:
+{"text": "Otimo! Um galpao de 2000m2 e um excelente investimento na regiao.", "action": null, "score_events": ["perfil_respondido", "objetivo_informado", "metragem_informada"], "detected_profile": "empresa", "detected_objective": "galpao logistico", "detected_area": "2000 m2"}`;
 
 const LLM_PROVIDERS = {
   openai:    { endpoint: "https://api.openai.com/v1/chat/completions",  defaultModel: "gpt-4o-mini",   format: "openai" },
@@ -309,30 +332,41 @@ const guardrails = {
   },
 
   parseResponse(raw) {
-    if (!raw) return { text: null, action: null };
+    const empty = { text: null, action: null, score_events: [], detected_profile: null, detected_objective: null, detected_area: null };
+    if (!raw) return empty;
+
+    const extract = (parsed) => ({
+      text: parsed.text || null,
+      action: parsed.action || null,
+      score_events: Array.isArray(parsed.score_events) ? parsed.score_events : [],
+      detected_profile: parsed.detected_profile || null,
+      detected_objective: parsed.detected_objective || null,
+      detected_area: parsed.detected_area || null,
+    });
+
     // Try direct JSON parse
     try {
       const parsed = JSON.parse(raw);
-      if (parsed.text) return { text: parsed.text, action: parsed.action || null };
+      if (parsed.text) return extract(parsed);
     } catch {}
     // Try extracting JSON from markdown code blocks
     const jsonMatch = raw.match(/```(?:json)?\s*(\{[\s\S]*?\})\s*```/);
     if (jsonMatch) {
       try {
         const parsed = JSON.parse(jsonMatch[1]);
-        if (parsed.text) return { text: parsed.text, action: parsed.action || null };
+        if (parsed.text) return extract(parsed);
       } catch {}
     }
-    // Try finding any JSON object in the text
-    const braceMatch = raw.match(/\{[^{}]*"text"\s*:\s*"[^"]*"[^{}]*\}/);
+    // Try finding JSON object with "text" key
+    const braceMatch = raw.match(/\{[\s\S]*"text"\s*:[\s\S]*\}/);
     if (braceMatch) {
       try {
         const parsed = JSON.parse(braceMatch[0]);
-        if (parsed.text) return { text: parsed.text, action: parsed.action || null };
+        if (parsed.text) return extract(parsed);
       } catch {}
     }
-    // Fallback: use raw text, no action
-    return { text: raw.replace(/```json|```/g, "").trim(), action: null };
+    // Fallback: use raw text
+    return { ...empty, text: raw.replace(/```json|```/g, "").trim() };
   },
 
   recordFailure(leadId) {
@@ -527,8 +561,15 @@ const llmConversationService = {
       parsed.action = null;
     }
 
+    // Validate score events
+    const validEvents = Object.keys(SCORE_MAP).concat(["interesse_construcao", "pergunta_preco", "pergunta_localizacao", "engajamento_alto"]);
+    parsed.score_events = (parsed.score_events || []).filter((e) => validEvents.includes(e));
+
     guardrails.recordSuccess(leadId);
-    log("llmConversation", "generated", { provider, text: parsed.text.slice(0, 100), action: parsed.action });
+    log("llmConversation", "generated", {
+      provider, text: parsed.text.slice(0, 100), action: parsed.action,
+      score_events: parsed.score_events, detected_profile: parsed.detected_profile,
+    });
 
     return parsed;
   },
@@ -539,13 +580,17 @@ const llmConversationService = {
 // ═══════════════════════════════════════════════════════════════════════════
 
 const SCORE_MAP = {
-  perfil_respondido:   { points: 10, description: "Respondeu perfil" },
-  objetivo_informado:  { points: 10, description: "Informou objetivo" },
-  metragem_informada:  { points: 10, description: "Informou metragem" },
-  material_solicitado: { points: 20, description: "Solicitou material" },
-  planta_solicitada:   { points: 15, description: "Solicitou planta" },
-  visita_aceita:       { points: 25, description: "Aceitou visita" },
-  proposta_solicitada: { points: 30, description: "Solicitou proposta" },
+  perfil_respondido:     { points: 10, description: "Respondeu perfil" },
+  objetivo_informado:    { points: 10, description: "Informou objetivo" },
+  metragem_informada:    { points: 10, description: "Informou metragem" },
+  material_solicitado:   { points: 20, description: "Solicitou material" },
+  planta_solicitada:     { points: 15, description: "Solicitou planta" },
+  visita_aceita:         { points: 25, description: "Aceitou visita" },
+  proposta_solicitada:   { points: 30, description: "Solicitou proposta" },
+  interesse_construcao:  { points: 10, description: "Interesse em construir" },
+  pergunta_preco:        { points:  5, description: "Perguntou sobre preço" },
+  pergunta_localizacao:  { points:  5, description: "Perguntou localização" },
+  engajamento_alto:      { points: 15, description: "Alto engajamento na conversa" },
 };
 
 const leadScoringService = {
@@ -851,37 +896,21 @@ const openclawWebhookReceiver = {
       };
     }
 
-    // ── leadScoringService: detect & persist score events ──
-    const scoreEvents = leadScoringService.detectScoreEvents(message, lead);
-    const newPoints = await leadScoringService.persistScoreEvents(lead.id, scoreEvents);
-    const newScore = lead.score + newPoints;
-    const classification = leadScoringService.classifyScore(newScore);
-
     // ── Build lead updates ──
     const updates = {
       last_message_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
-      score: newScore,
-      score_classification: classification,
+      score: lead.score,
+      score_classification: lead.score_classification,
     };
 
-    const detectedProfile = leadScoringService.detectProfile(message);
-    if (detectedProfile && !lead.profile_type) updates.profile_type = detectedProfile;
-
-    const detectedObjective = leadScoringService.detectObjective(message);
-    if (detectedObjective && !lead.objective) updates.objective = detectedObjective;
-
-    const detectedArea = leadScoringService.detectArea(message);
-    if (detectedArea && !lead.desired_area) updates.desired_area = detectedArea;
-
-    if (/constru|galpão para/.test(message.toLowerCase())) {
-      updates.construction_interest = true;
-    }
-
     // ── Determine response: LLM or state machine ──
-    const handoff = handoffRouterService.needsHandoff(message, newScore);
     let botResponse;
+    let scoreEvents = [];
     const llmEnabled = getConfig("llm_enabled", false) && getConfig("llm_api_key", "");
+
+    // Pre-check handoff keywords (works in both modes)
+    const handoff = handoffRouterService.needsHandoff(message, lead.score);
 
     if (handoff.needed) {
       // Forced handoff (keyword or score threshold) — same for both modes
@@ -897,12 +926,28 @@ const openclawWebhookReceiver = {
         await visitSchedulingService.createVisitRequest(lead.id, message);
       }
 
+      // Regex scoring fallback for handoff
+      scoreEvents = leadScoringService.detectScoreEvents(message, lead);
       botResponse = getBotMessages().TRANSFERENCIA_HUMANA;
     } else if (llmEnabled) {
-      // ══════ LLM MODE ══════
+      // ══════ LLM MODE — IA determines scoring ══════
       try {
         const llmResult = await llmConversationService.generate(lead.id, lead, message);
         botResponse = llmResult.text;
+
+        // Use LLM-detected score events (contextual, not regex)
+        scoreEvents = llmResult.score_events || [];
+
+        // Use LLM-detected profile, objective, area
+        if (llmResult.detected_profile && !lead.profile_type) {
+          updates.profile_type = llmResult.detected_profile;
+        }
+        if (llmResult.detected_objective && !lead.objective) {
+          updates.objective = llmResult.detected_objective;
+        }
+        if (llmResult.detected_area && !lead.desired_area) {
+          updates.desired_area = llmResult.detected_area;
+        }
 
         // Process LLM actions
         if (llmResult.action === "send_material") {
@@ -929,7 +974,7 @@ const openclawWebhookReceiver = {
           updates.conversation_state = "LLM_ACTIVE";
         }
 
-        log("llmConversation", "success", { leadId: lead.id, action: llmResult.action });
+        log("llmConversation", "success", { leadId: lead.id, action: llmResult.action, score_events: scoreEvents });
       } catch (llmErr) {
         // ══════ LLM FALLBACK → STATE MACHINE ══════
         log("llmConversation", "fallback to state machine", { error: llmErr.message });
@@ -939,6 +984,16 @@ const openclawWebhookReceiver = {
 
     // ══════ STATE MACHINE (default or LLM fallback) ══════
     if (!botResponse && !handoff.needed) {
+      // Use regex scoring in state machine mode
+      scoreEvents = leadScoringService.detectScoreEvents(message, lead);
+      const detectedProfile = leadScoringService.detectProfile(message);
+      if (detectedProfile && !lead.profile_type) updates.profile_type = detectedProfile;
+      const detectedObjective = leadScoringService.detectObjective(message);
+      if (detectedObjective && !lead.objective) updates.objective = detectedObjective;
+      const detectedArea = leadScoringService.detectArea(message);
+      if (detectedArea && !lead.desired_area) updates.desired_area = detectedArea;
+      if (/constru|galpão para/.test(message.toLowerCase())) updates.construction_interest = true;
+
       const currentState = lead.conversation_state || "START";
       const lower = message.toLowerCase();
 
@@ -989,6 +1044,25 @@ const openclawWebhookReceiver = {
           updates.conversation_state = nextState;
           const profile = updates.profile_type || lead.profile_type;
           botResponse = conversationStateService.getBotResponse(nextState, profile);
+        }
+      }
+    }
+
+    // ── Persist score events and update score ──
+    if (scoreEvents.length > 0) {
+      const newPoints = await leadScoringService.persistScoreEvents(lead.id, scoreEvents);
+      updates.score = lead.score + newPoints;
+      updates.score_classification = leadScoringService.classifyScore(updates.score);
+
+      // Check if score crossed hot threshold after LLM scoring
+      if (updates.score >= 51 && !updates.human_handoff) {
+        const autoHandoff = getConfig("auto_handoff_hot", true);
+        if (autoHandoff) {
+          updates.human_handoff = true;
+          updates.handoff_reason = "Score alto (lead quente)";
+          updates.attendance_status = "aguardando_humano";
+          updates.conversation_state = "TRANSFERENCIA_HUMANA";
+          await handoffRouterService.createHandoff(lead.id, "Score alto (lead quente)");
         }
       }
     }

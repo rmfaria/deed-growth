@@ -106,4 +106,8 @@ export const SCORE_RULES = [
   { event: 'planta_solicitada', points: 15, label: 'Solicitou planta' },
   { event: 'visita_aceita', points: 25, label: 'Aceitou visita' },
   { event: 'proposta_solicitada', points: 30, label: 'Solicitou proposta' },
+  { event: 'interesse_construcao', points: 10, label: 'Interesse em construir' },
+  { event: 'pergunta_preco', points: 5, label: 'Perguntou sobre preço' },
+  { event: 'pergunta_localizacao', points: 5, label: 'Perguntou localização' },
+  { event: 'engajamento_alto', points: 15, label: 'Alto engajamento' },
 ];
