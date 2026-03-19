@@ -1105,7 +1105,9 @@ const openclawWebhookReceiver = {
     await supabase.insert("bot_messages", { lead_id: lead.id, direction: "outbound", content: botResponse, message_type: "text" });
 
     // ── Update lead ──
-    await supabase.update("bot_leads", { id: lead.id }, updates);
+    log("webhookReceiver", "updating lead", { id: lead.id, score: updates.score, state: updates.conversation_state });
+    const updateResult = await supabase.update("bot_leads", { id: lead.id }, updates);
+    log("webhookReceiver", "lead updated", { result: updateResult?.score ?? "no result" });
 
     // ── Send materials (once only, before text) ──
     let materialsSent = [];
