@@ -941,6 +941,15 @@ const openclawWebhookReceiver = {
       message_type: "text",
     });
 
+    // ── Rate limit per phone: min 3s between responses ──
+    if (!global._lastResponseTime) global._lastResponseTime = new Map();
+    const lastResp = global._lastResponseTime.get(phone) || 0;
+    if (Date.now() - lastResp < 3000) {
+      log("webhookReceiver", "rate limited", { phone, elapsed: Date.now() - lastResp });
+      return { status: 200, body: { status: "rate_limited", lead_id: lead.id } };
+    }
+    global._lastResponseTime.set(phone, Date.now());
+
     // ── Skip if already handled by human ──
     if (["em_atendimento", "atendido", "encerrado"].includes(lead.attendance_status)) {
       log("webhookReceiver", "skipped — human handling", { leadId: lead.id });
@@ -1088,12 +1097,18 @@ const openclawWebhookReceiver = {
           await handoffRouterService.createHandoff(lead.id, reason);
           botResponse = getBotMessages().TRANSFERENCIA_HUMANA;
         } else if (wantsMaterial || wantsPlanta) {
-          const materialTypes = [];
-          if (wantsPlanta) materialTypes.push("planta");
-          if (wantsMaterial) materialTypes.push("apresentacao", "pdf", "video");
-          updates._dispatchMaterialTypes = materialTypes;
+          // Check if materials already sent
+          const prevMedia = await supabase.selectManyRaw("bot_messages", `lead_id=eq.${lead.id}&message_type=neq.text&limit=1&select=id`);
+          if (prevMedia.length === 0) {
+            const materialTypes = [];
+            if (wantsPlanta) materialTypes.push("planta");
+            if (wantsMaterial) materialTypes.push("apresentacao", "pdf", "video");
+            updates._dispatchMaterialTypes = materialTypes;
+            botResponse = "Perfeito! Estou enviando o material para você. Qualquer dúvida, estou à disposição.";
+          } else {
+            botResponse = "Já enviei o material para você! Posso agendar uma visita ou te conectar com um consultor. O que prefere?";
+          }
           updates.conversation_state = "POS_CONVERSAO";
-          botResponse = "Perfeito! Estou enviando o material para você. Qualquer dúvida, estou à disposição.";
         } else {
           updates.conversation_state = "CONVERSAO";
           botResponse = BOT_MESSAGES_STATIC.CONVERSAO;
@@ -1176,24 +1191,19 @@ const openclawWebhookReceiver = {
       phone,
       bot_response: botResponse,
       conversation_state: updates.conversation_state || lead.conversation_state,
-      score: newScore,
-      score_classification: classification,
+      score: updates.score,
+      score_classification: updates.score_classification,
       handoff: handoff.needed,
       handoff_reason: handoff.reason,
       score_events: scoreEvents,
       materials_sent: materialsSent,
       whatsapp_sent: whatsappResult.sent,
-      detected: {
-        profile: detectedProfile,
-        objective: detectedObjective,
-        area: detectedArea,
-      },
     };
 
     log("webhookReceiver", "processed", {
       lead_id: lead.id,
       state: responsePayload.conversation_state,
-      score: newScore,
+      score: updates.score,
       handoff: handoff.needed,
       whatsapp_sent: whatsappResult.sent,
     });
@@ -1330,6 +1340,23 @@ const server = createServer(async (req, res) => {
       const fromMe = data?.key?.fromMe;
       if (fromMe) {
         return jsonResponse(res, 200, { status: "ignored", reason: "outbound message (fromMe)" });
+      }
+
+      // Dedup: ignore messages already processed (Evolution can send duplicate webhooks)
+      const messageId = data?.key?.id;
+      if (messageId) {
+        if (!global._processedMsgIds) global._processedMsgIds = new Map();
+        if (global._processedMsgIds.has(messageId)) {
+          return jsonResponse(res, 200, { status: "ignored", reason: "duplicate webhook" });
+        }
+        global._processedMsgIds.set(messageId, Date.now());
+        // Cleanup old entries (keep last 5 minutes)
+        if (global._processedMsgIds.size > 500) {
+          const cutoff = Date.now() - 300000;
+          for (const [k, v] of global._processedMsgIds) {
+            if (v < cutoff) global._processedMsgIds.delete(k);
+          }
+        }
       }
 
       // Ignore non-message events (status updates, receipts, etc.)
