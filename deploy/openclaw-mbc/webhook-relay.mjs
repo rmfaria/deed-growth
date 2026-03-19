@@ -418,7 +418,7 @@ const llmConversationService = {
     }));
   },
 
-  buildSystemPrompt(lead, template) {
+  async buildSystemPrompt(lead, template) {
     const persona = getConfig("persona", "Rogério");
     let prompt = (template || DEFAULT_SYSTEM_PROMPT).replace(/\{persona\}/g, persona);
     // Inject lead context
@@ -428,6 +428,20 @@ const llmConversationService = {
     if (lead.objective) prompt += `- Objetivo: ${lead.objective}\n`;
     if (lead.desired_area) prompt += `- Area desejada: ${lead.desired_area}\n`;
     prompt += `- Score: ${lead.score} (${lead.score_classification})\n`;
+    prompt += `- Estado da conversa: ${lead.conversation_state}\n`;
+    if (lead.visit_interest) prompt += `- Ja demonstrou interesse em visita\n`;
+    if (lead.human_handoff) prompt += `- Ja foi transferido para humano\n`;
+
+    // Check if materials were already sent
+    try {
+      const sentMedia = await supabase.selectManyRaw(
+        "bot_messages",
+        `lead_id=eq.${lead.id}&message_type=neq.text&limit=1&select=id`
+      );
+      if (sentMedia.length > 0) {
+        prompt += `\n⚠️ MATERIAIS JA FORAM ENVIADOS para este lead. NAO use action "send_material" novamente. Conduza a conversa para agendar visita ou falar com consultor humano.\n`;
+      }
+    } catch {}
 
     // Anti-repetition context
     const recent = guardrails._recentResponses.get(lead.id) || [];
@@ -557,7 +571,7 @@ const llmConversationService = {
     // Actually it IS already saved, so it's in the history. No need to add again.
 
     // Build system prompt with lead context
-    const systemPrompt = this.buildSystemPrompt(lead, systemPromptTemplate);
+    const systemPrompt = await this.buildSystemPrompt(lead, systemPromptTemplate);
 
     // Call provider
     let rawResponse;
@@ -979,7 +993,7 @@ const openclawWebhookReceiver = {
         scoreEvents = llmResult.score_events || [];
 
         // Use LLM-detected profile, objective, area
-        if (llmResult.detected_profile && !lead.profile_type) {
+        if (llmResult.detected_profile && (!lead.profile_type || lead.profile_type === "indefinido")) {
           updates.profile_type = llmResult.detected_profile;
         }
         if (llmResult.detected_objective && !lead.objective) {
@@ -989,9 +1003,20 @@ const openclawWebhookReceiver = {
           updates.desired_area = llmResult.detected_area;
         }
 
+        // Check if materials were already sent to this lead
+        const alreadySentMaterials = await supabase.selectManyRaw(
+          "bot_messages",
+          `lead_id=eq.${lead.id}&message_type=neq.text&limit=1&select=id`
+        );
+        const materialsAlreadySent = alreadySentMaterials.length > 0;
+
         // Process LLM actions
-        if (llmResult.action === "send_material") {
+        if (llmResult.action === "send_material" && !materialsAlreadySent) {
           updates._dispatchMaterialTypes = ["apresentacao", "pdf", "video"];
+          updates.conversation_state = "POS_CONVERSAO";
+        } else if (llmResult.action === "send_material" && materialsAlreadySent) {
+          // Already sent — don't send again, advance conversation
+          log("llmConversation", "materials already sent, skipping dispatch");
           updates.conversation_state = "POS_CONVERSAO";
         } else if (llmResult.action === "send_planta") {
           updates._dispatchMaterialTypes = ["planta"];
