@@ -1258,8 +1258,8 @@ const openclawWebhookReceiver = {
           botResponse = BOT_MESSAGES_STATIC.CONVERSAO;
         }
       } else {
-        const isQuestion = /\?|como assim|não entendi|o que é|qual|pode explicar|me explica|como funciona/i.test(lower);
-        if (isQuestion && currentState !== "START") {
+        const isConfused = /como assim|não entendi|pode explicar|me explica|repete|não compreendi|hein/i.test(lower);
+        if (isConfused && currentState !== "START") {
           updates.conversation_state = currentState;
           botResponse = conversationStateService.getBotResponse(currentState, updates.profile_type || lead.profile_type);
         } else {
