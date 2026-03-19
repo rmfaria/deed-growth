@@ -237,9 +237,13 @@ const DEFAULT_SYSTEM_PROMPT = `Voce e {persona}, corretor responsavel pelo Metro
 - NUNCA invente informacoes que nao estejam neste prompt
 - Se nao souber algo, diga que vai verificar com a equipe
 - Nao discuta politica, religiao ou temas fora do empreendimento
-- Nao repita a mesma mensagem anterior — varie suas respostas
+- NUNCA repita a mesma mensagem — varie sempre suas respostas
 - Se o lead disser "sim", "pode", "ok", "claro" entenda como afirmacao a sua ultima pergunta
 - Conduza naturalmente para envio de material, visita ou falar com consultor
+- Seja PROATIVO: na primeira mensagem, apresente-se e ja fale brevemente sobre o MBC. NAO fique apenas perguntando "como posso ajudar"
+- Siga este fluxo natural: apresentacao → qualificacao (empresa ou investimento?) → detalhes do MBC → condicoes comerciais → oferecer material/visita
+- Se o lead mandou "oi" ou saudacao simples, apresente-se e ja comece a falar sobre o empreendimento
+- NUNCA responda apenas com saudacao. Sempre inclua informacao util sobre o MBC
 
 ## SOBRE O EMPREENDIMENTO
 - Nome: Metropolitan Business Center (MBC)
@@ -316,19 +320,39 @@ const guardrails = {
 
   detectLoop(leadId, newResponse) {
     const recent = this._recentResponses.get(leadId) || [];
-    const snippet = (newResponse || "").slice(0, 80).toLowerCase();
-    const isLoop = recent.some((r) => r.slice(0, 80).toLowerCase() === snippet);
+    const normalize = (s) => (s || "").toLowerCase().replace(/[!?.,\s]+/g, " ").trim();
+    const newNorm = normalize(newResponse);
+    // Check similarity: same first 5 words OR >70% overlap with any recent
+    const newWords = newNorm.split(" ").slice(0, 8).join(" ");
+    const isLoop = recent.some((r) => {
+      const rNorm = normalize(r);
+      const rWords = rNorm.split(" ").slice(0, 8).join(" ");
+      // Same opening words
+      if (newWords === rWords) return true;
+      // High overlap: both start with greeting-like pattern
+      if (/^(oi|olá|ola|como|tudo)/.test(newWords) && /^(oi|olá|ola|como|tudo)/.test(rWords)) return true;
+      return false;
+    });
     recent.push(newResponse || "");
-    if (recent.length > 3) recent.shift();
+    if (recent.length > 5) recent.shift();
     this._recentResponses.set(leadId, recent);
     return isLoop;
   },
 
   truncateAtSentence(text, maxLen) {
     if (!text || text.length <= maxLen) return text;
+    // Find the last complete sentence within the limit
     const truncated = text.slice(0, maxLen);
-    const lastPeriod = Math.max(truncated.lastIndexOf("."), truncated.lastIndexOf("!"), truncated.lastIndexOf("?"));
-    return lastPeriod > maxLen * 0.5 ? truncated.slice(0, lastPeriod + 1) : truncated;
+    const lastEnd = Math.max(
+      truncated.lastIndexOf(". "),
+      truncated.lastIndexOf("! "),
+      truncated.lastIndexOf("? "),
+      truncated.lastIndexOf(".\n"),
+      truncated.lastIndexOf("."),
+      truncated.lastIndexOf("!"),
+      truncated.lastIndexOf("?"),
+    );
+    return lastEnd > maxLen * 0.3 ? truncated.slice(0, lastEnd + 1).trim() : truncated.trim();
   },
 
   parseResponse(raw) {
@@ -404,13 +428,34 @@ const llmConversationService = {
     if (lead.objective) prompt += `- Objetivo: ${lead.objective}\n`;
     if (lead.desired_area) prompt += `- Area desejada: ${lead.desired_area}\n`;
     prompt += `- Score: ${lead.score} (${lead.score_classification})\n`;
+
+    // Anti-repetition context
+    const recent = guardrails._recentResponses.get(lead.id) || [];
+    if (recent.length > 0) {
+      prompt += `\n## SUAS ULTIMAS RESPOSTAS (NAO REPITA)\n`;
+      recent.slice(-3).forEach((r, i) => {
+        prompt += `${i + 1}. "${(r || "").slice(0, 100)}"\n`;
+      });
+      prompt += `\nVarie completamente sua abordagem. Avance a conversa, nao fique repetindo saudacoes.\n`;
+    }
+
     return prompt;
   },
 
   async callOpenAIFormat(endpoint, apiKey, model, systemPrompt, history, temperature, extraHeaders) {
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 10000);
+    const timeout = setTimeout(() => controller.abort(), 15000);
     try {
+      const body = {
+        model,
+        messages: [{ role: "system", content: systemPrompt }, ...history],
+        temperature,
+        max_tokens: 1000,
+      };
+      // Force JSON output for OpenAI models that support it
+      if (endpoint.includes("openai.com")) {
+        body.response_format = { type: "json_object" };
+      }
       const resp = await fetch(endpoint, {
         method: "POST",
         signal: controller.signal,
@@ -419,12 +464,7 @@ const llmConversationService = {
           Authorization: `Bearer ${apiKey}`,
           ...extraHeaders,
         },
-        body: JSON.stringify({
-          model,
-          messages: [{ role: "system", content: systemPrompt }, ...history],
-          temperature,
-          max_tokens: 800,
-        }),
+        body: JSON.stringify(body),
       });
       const data = await resp.json();
       if (!resp.ok) throw new Error(data.error?.message || `API ${resp.status}`);
