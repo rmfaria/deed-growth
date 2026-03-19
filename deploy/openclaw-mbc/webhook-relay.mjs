@@ -1148,21 +1148,26 @@ const openclawWebhookReceiver = {
     const explicitTypes = updates._dispatchMaterialTypes;
     delete updates._dispatchMaterialTypes;
     if (explicitTypes && explicitTypes.length > 0) {
-      // CONVERSAO handler determined explicit material types
       const materials = await materialDispatchService.getActiveMaterials(explicitTypes);
-      for (const material of materials) {
-        if (material.url && !material.url.includes("example.com")) {
-          await whatsappMessageService.sendMedia(phone, material.url, material.name);
-          materialsSent.push({ type: material.type, name: material.name });
-        }
+      const validMaterials = materials.filter((m) => m.url && !m.url.includes("example.com"));
+      for (let i = 0; i < validMaterials.length; i++) {
+        const material = validMaterials[i];
+        // Last material gets the bot response as caption
+        const caption = i === validMaterials.length - 1 ? botResponse : material.name;
+        await whatsappMessageService.sendMedia(phone, material.url, caption);
+        materialsSent.push({ type: material.type, name: material.name });
       }
       log("materialDispatch", "explicit dispatch", { phone, types: explicitTypes, sent: materialsSent.length });
-    } else {
-      materialsSent = await materialDispatchService.dispatch(phone, message);
     }
 
-    // ── whatsappMessageService: send bot response ──
-    const whatsappResult = await whatsappMessageService.sendText(phone, botResponse);
+    // ── whatsappMessageService: send bot text response (only if no materials were sent) ──
+    let whatsappResult;
+    if (materialsSent.length > 0) {
+      // Text was already sent as caption of last material
+      whatsappResult = { sent: true };
+    } else {
+      whatsappResult = await whatsappMessageService.sendText(phone, botResponse);
+    }
 
     // ── Build response payload ──
     const responsePayload = {
