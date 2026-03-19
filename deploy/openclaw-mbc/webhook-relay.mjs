@@ -789,9 +789,13 @@ const leadScoringService = {
 // ═══════════════════════════════════════════════════════════════════════════
 
 const HANDOFF_KEYWORDS = [
-  "proposta personalizada", "visita", "desconto", "negociar",
+  "proposta personalizada", "desconto", "negociar",
   "veículo na entrada", "carro na entrada", "condição especial",
-  "condição diferenciada", "falar com alguém", "falar com humano", "atendente",
+  "condição diferenciada", "falar com alguém", "falar com humano",
+  "falar com representante", "falar com corretor", "falar com vendedor",
+  "falar com consultor", "falar com pessoa", "falar com atendente",
+  "atendente", "representante", "corretor",
+  "quero falar", "preciso falar",
 ];
 
 const handoffRouterService = {
