@@ -959,76 +959,67 @@ const openclawWebhookReceiver = {
       };
     }
 
+    // ── Scoring: detect events from message ──
+    const scoreEvents = leadScoringService.detectScoreEvents(message, lead);
+    const newPoints = await leadScoringService.persistScoreEvents(lead.id, scoreEvents);
+    const newScore = lead.score + newPoints;
+    const classification = leadScoringService.classifyScore(newScore);
+
     // ── Build lead updates ──
     const updates = {
       last_message_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
-      score: lead.score,
-      score_classification: lead.score_classification,
+      score: newScore,
+      score_classification: classification,
     };
 
-    // ── Determine response: LLM or state machine ──
+    // ── Detect profile, objective, area ──
+    const detectedProfile = leadScoringService.detectProfile(message);
+    if (detectedProfile && (!lead.profile_type || lead.profile_type === "indefinido")) updates.profile_type = detectedProfile;
+    const detectedObjective = leadScoringService.detectObjective(message);
+    if (detectedObjective && !lead.objective) updates.objective = detectedObjective;
+    const detectedArea = leadScoringService.detectArea(message);
+    if (detectedArea && !lead.desired_area) updates.desired_area = detectedArea;
+    if (/constru|galpão para/.test(message.toLowerCase())) updates.construction_interest = true;
+
+    // ── Check if materials were already sent ──
+    const prevMedia = await supabase.selectManyRaw("bot_messages", `lead_id=eq.${lead.id}&message_type=neq.text&limit=1&select=id`);
+    const materialsAlreadySent = prevMedia.length > 0;
+
+    // ── Determine bot response ──
+    const handoff = handoffRouterService.needsHandoff(message, newScore);
     let botResponse;
-    let scoreEvents = [];
+    let dispatchMaterialTypes = null;
     const llmEnabled = getConfig("llm_enabled", false) && getConfig("llm_api_key", "");
 
-    // Pre-check handoff keywords (works in both modes)
-    const handoff = handoffRouterService.needsHandoff(message, lead.score);
-
     if (handoff.needed) {
-      // Forced handoff (keyword or score threshold) — same for both modes
+      // ── Handoff ──
       updates.human_handoff = true;
       updates.handoff_reason = handoff.reason;
       updates.attendance_status = "aguardando_humano";
       updates.conversation_state = "TRANSFERENCIA_HUMANA";
-
       await handoffRouterService.createHandoff(lead.id, handoff.reason);
-
       if (visitSchedulingService.detectVisitIntent(message)) {
         updates.visit_interest = true;
         await visitSchedulingService.createVisitRequest(lead.id, message);
       }
-
-      // Regex scoring fallback for handoff
-      scoreEvents = leadScoringService.detectScoreEvents(message, lead);
       botResponse = getBotMessages().TRANSFERENCIA_HUMANA;
+
     } else if (llmEnabled) {
-      // ══════ LLM MODE — IA determines scoring ══════
+      // ── LLM mode ──
       try {
         const llmResult = await llmConversationService.generate(lead.id, lead, message);
         botResponse = llmResult.text;
 
-        // Use LLM-detected score events (contextual, not regex)
-        scoreEvents = llmResult.score_events || [];
+        if (llmResult.detected_profile && (!lead.profile_type || lead.profile_type === "indefinido")) updates.profile_type = llmResult.detected_profile;
+        if (llmResult.detected_objective && !lead.objective) updates.objective = llmResult.detected_objective;
+        if (llmResult.detected_area && !lead.desired_area) updates.desired_area = llmResult.detected_area;
 
-        // Use LLM-detected profile, objective, area
-        if (llmResult.detected_profile && (!lead.profile_type || lead.profile_type === "indefinido")) {
-          updates.profile_type = llmResult.detected_profile;
-        }
-        if (llmResult.detected_objective && !lead.objective) {
-          updates.objective = llmResult.detected_objective;
-        }
-        if (llmResult.detected_area && !lead.desired_area) {
-          updates.desired_area = llmResult.detected_area;
-        }
-
-        // Check if materials were already sent to this lead
-        const alreadySentMaterials = await supabase.selectManyRaw(
-          "bot_messages",
-          `lead_id=eq.${lead.id}&message_type=neq.text&limit=1&select=id`
-        );
-        const materialsAlreadySent = alreadySentMaterials.length > 0;
-
-        // Process LLM actions
         if (llmResult.action === "send_material" && !materialsAlreadySent) {
-          updates._dispatchMaterialTypes = ["apresentacao", "pdf", "video"];
+          dispatchMaterialTypes = ["apresentacao", "pdf", "video"];
           updates.conversation_state = "POS_CONVERSAO";
-        } else if (llmResult.action === "send_material" && materialsAlreadySent) {
-          // Already sent — don't send again, advance conversation
-          log("llmConversation", "materials already sent, skipping dispatch");
-          updates.conversation_state = "POS_CONVERSAO";
-        } else if (llmResult.action === "send_planta") {
-          updates._dispatchMaterialTypes = ["planta"];
+        } else if (llmResult.action === "send_planta" && !materialsAlreadySent) {
+          dispatchMaterialTypes = ["planta"];
           updates.conversation_state = "POS_CONVERSAO";
         } else if (llmResult.action === "schedule_visit") {
           updates.visit_interest = true;
@@ -1047,27 +1038,15 @@ const openclawWebhookReceiver = {
         } else {
           updates.conversation_state = "LLM_ACTIVE";
         }
-
-        log("llmConversation", "success", { leadId: lead.id, action: llmResult.action, score_events: scoreEvents });
+        log("llmConversation", "success", { leadId: lead.id, action: llmResult.action });
       } catch (llmErr) {
-        // ══════ LLM FALLBACK → STATE MACHINE ══════
         log("llmConversation", "fallback to state machine", { error: llmErr.message });
-        botResponse = null; // will be set by state machine below
+        botResponse = null;
       }
     }
 
-    // ══════ STATE MACHINE (default or LLM fallback) ══════
+    // ── State machine (default or LLM fallback) ──
     if (!botResponse && !handoff.needed) {
-      // Use regex scoring in state machine mode
-      scoreEvents = leadScoringService.detectScoreEvents(message, lead);
-      const detectedProfile = leadScoringService.detectProfile(message);
-      if (detectedProfile && !lead.profile_type) updates.profile_type = detectedProfile;
-      const detectedObjective = leadScoringService.detectObjective(message);
-      if (detectedObjective && !lead.objective) updates.objective = detectedObjective;
-      const detectedArea = leadScoringService.detectArea(message);
-      if (detectedArea && !lead.desired_area) updates.desired_area = detectedArea;
-      if (/constru|galpão para/.test(message.toLowerCase())) updates.construction_interest = true;
-
       const currentState = lead.conversation_state || "START";
       const lower = message.toLowerCase();
 
@@ -1090,25 +1069,18 @@ const openclawWebhookReceiver = {
           updates.handoff_reason = reason;
           updates.attendance_status = "aguardando_humano";
           updates.conversation_state = "TRANSFERENCIA_HUMANA";
-          if (wantsVisita) {
-            updates.visit_interest = true;
-            await visitSchedulingService.createVisitRequest(lead.id, message);
-          }
+          if (wantsVisita) { updates.visit_interest = true; await visitSchedulingService.createVisitRequest(lead.id, message); }
           await handoffRouterService.createHandoff(lead.id, reason);
           botResponse = getBotMessages().TRANSFERENCIA_HUMANA;
-        } else if (wantsMaterial || wantsPlanta) {
-          // Check if materials already sent
-          const prevMedia = await supabase.selectManyRaw("bot_messages", `lead_id=eq.${lead.id}&message_type=neq.text&limit=1&select=id`);
-          if (prevMedia.length === 0) {
-            const materialTypes = [];
-            if (wantsPlanta) materialTypes.push("planta");
-            if (wantsMaterial) materialTypes.push("apresentacao", "pdf", "video");
-            updates._dispatchMaterialTypes = materialTypes;
-            botResponse = "Perfeito! Estou enviando o material para você. Qualquer dúvida, estou à disposição.";
-          } else {
-            botResponse = "Já enviei o material para você! Posso agendar uma visita ou te conectar com um consultor. O que prefere?";
-          }
+        } else if ((wantsMaterial || wantsPlanta) && !materialsAlreadySent) {
+          dispatchMaterialTypes = [];
+          if (wantsPlanta) dispatchMaterialTypes.push("planta");
+          if (wantsMaterial) dispatchMaterialTypes.push("apresentacao", "pdf", "video");
           updates.conversation_state = "POS_CONVERSAO";
+          botResponse = "Perfeito! Estou enviando o material para você. Qualquer dúvida, estou à disposição.";
+        } else if ((wantsMaterial || wantsPlanta) && materialsAlreadySent) {
+          updates.conversation_state = "POS_CONVERSAO";
+          botResponse = "Já enviei o material para você! Posso agendar uma visita ou te conectar com um consultor. O que prefere?";
         } else {
           updates.conversation_state = "CONVERSAO";
           botResponse = BOT_MESSAGES_STATIC.CONVERSAO;
@@ -1117,95 +1089,51 @@ const openclawWebhookReceiver = {
         const isQuestion = /\?|como assim|não entendi|o que é|qual|pode explicar|me explica|como funciona/i.test(lower);
         if (isQuestion && currentState !== "START") {
           updates.conversation_state = currentState;
-          const profile = updates.profile_type || lead.profile_type;
-          botResponse = conversationStateService.getBotResponse(currentState, profile);
+          botResponse = conversationStateService.getBotResponse(currentState, updates.profile_type || lead.profile_type);
         } else {
           const nextState = conversationStateService.getNextState(currentState, detectedProfile);
           updates.conversation_state = nextState;
-          const profile = updates.profile_type || lead.profile_type;
-          botResponse = conversationStateService.getBotResponse(nextState, profile);
-        }
-      }
-    }
-
-    // ── Persist score events and update score ──
-    if (scoreEvents.length > 0) {
-      const newPoints = await leadScoringService.persistScoreEvents(lead.id, scoreEvents);
-      updates.score = lead.score + newPoints;
-      updates.score_classification = leadScoringService.classifyScore(updates.score);
-
-      // Check if score crossed hot threshold after LLM scoring
-      if (updates.score >= 51 && !updates.human_handoff) {
-        const autoHandoff = getConfig("auto_handoff_hot", true);
-        if (autoHandoff) {
-          updates.human_handoff = true;
-          updates.handoff_reason = "Score alto (lead quente)";
-          updates.attendance_status = "aguardando_humano";
-          updates.conversation_state = "TRANSFERENCIA_HUMANA";
-          await handoffRouterService.createHandoff(lead.id, "Score alto (lead quente)");
+          botResponse = conversationStateService.getBotResponse(nextState, updates.profile_type || lead.profile_type);
         }
       }
     }
 
     // ── Save outbound message ──
-    await supabase.insert("bot_messages", {
-      lead_id: lead.id,
-      direction: "outbound",
-      content: botResponse,
-      message_type: "text",
-    });
+    await supabase.insert("bot_messages", { lead_id: lead.id, direction: "outbound", content: botResponse, message_type: "text" });
 
     // ── Update lead ──
     await supabase.update("bot_leads", { id: lead.id }, updates);
 
-    // ── materialDispatchService: send materials if requested ──
+    // ── Send materials (once only, before text) ──
     let materialsSent = [];
-    const explicitTypes = updates._dispatchMaterialTypes;
-    delete updates._dispatchMaterialTypes;
-    if (explicitTypes && explicitTypes.length > 0) {
-      const materials = await materialDispatchService.getActiveMaterials(explicitTypes);
-      const validMaterials = materials.filter((m) => m.url && !m.url.includes("example.com"));
-      for (let i = 0; i < validMaterials.length; i++) {
-        const material = validMaterials[i];
-        // Last material gets the bot response as caption
-        const caption = i === validMaterials.length - 1 ? botResponse : material.name;
-        await whatsappMessageService.sendMedia(phone, material.url, caption);
-        materialsSent.push({ type: material.type, name: material.name });
+    if (dispatchMaterialTypes && dispatchMaterialTypes.length > 0) {
+      const materials = await materialDispatchService.getActiveMaterials(dispatchMaterialTypes);
+      for (const material of materials) {
+        if (material.url && !material.url.includes("example.com")) {
+          await whatsappMessageService.sendMedia(phone, material.url, material.name);
+          materialsSent.push({ type: material.type, name: material.name });
+        }
       }
-      log("materialDispatch", "explicit dispatch", { phone, types: explicitTypes, sent: materialsSent.length });
+      log("materialDispatch", "sent", { phone, count: materialsSent.length });
     }
 
-    // ── whatsappMessageService: send bot text response (only if no materials were sent) ──
-    let whatsappResult;
-    if (materialsSent.length > 0) {
-      // Text was already sent as caption of last material
-      whatsappResult = { sent: true };
-    } else {
-      whatsappResult = await whatsappMessageService.sendText(phone, botResponse);
-    }
+    // ── Send bot text (always, even after materials) ──
+    const whatsappResult = await whatsappMessageService.sendText(phone, botResponse);
 
-    // ── Build response payload ──
+    // ── Build response ──
     const responsePayload = {
       status: "processed",
-      lead_id: lead.id,
-      phone,
-      bot_response: botResponse,
+      lead_id: lead.id, phone, bot_response: botResponse,
       conversation_state: updates.conversation_state || lead.conversation_state,
-      score: updates.score,
-      score_classification: updates.score_classification,
-      handoff: handoff.needed,
-      handoff_reason: handoff.reason,
-      score_events: scoreEvents,
-      materials_sent: materialsSent,
+      score: newScore, score_classification: classification,
+      handoff: handoff.needed, handoff_reason: handoff.reason,
+      score_events: scoreEvents, materials_sent: materialsSent,
       whatsapp_sent: whatsappResult.sent,
     };
 
     log("webhookReceiver", "processed", {
-      lead_id: lead.id,
-      state: responsePayload.conversation_state,
-      score: updates.score,
-      handoff: handoff.needed,
-      whatsapp_sent: whatsappResult.sent,
+      lead_id: lead.id, state: responsePayload.conversation_state,
+      score: newScore, handoff: handoff.needed, whatsapp_sent: whatsappResult.sent,
     });
 
     // ── Push to orbit-core (fire-and-forget) ──
