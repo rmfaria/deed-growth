@@ -488,17 +488,42 @@ const llmConversationService = {
 
   async buildSystemPrompt(lead, template) {
     const persona = getConfig("persona", "Rogério");
-    let prompt = (template || DEFAULT_SYSTEM_PROMPT).replace(/\{persona\}/g, persona);
+    let basePrompt = (template || DEFAULT_SYSTEM_PROMPT).replace(/\{persona\}/g, persona);
+
+    // Inject real business info from config (overrides generic template)
+    const openingMsg = getConfig("opening_message", "");
+    const contextMsg = getConfig("context_message", "");
+    const transferMsg = getConfig("transfer_message", "");
+
+    let prompt = basePrompt;
+
+    // Inject configured messages as additional context
+    prompt += `\n\n## MENSAGENS CONFIGURADAS (use como referencia de tom e conteudo)\n`;
+    if (openingMsg) prompt += `- Mensagem de abertura: "${openingMsg.replace(/\{persona\}/g, persona)}"\n`;
+    if (contextMsg) prompt += `- Contexto do empreendimento: "${contextMsg}"\n`;
+    if (transferMsg) prompt += `- Mensagem de transferencia: "${transferMsg}"\n`;
+
+    // Inject available materials as knowledge
+    try {
+      const materials = await supabase.selectMany("bot_materials", { is_active: true });
+      if (Array.isArray(materials) && materials.length > 0) {
+        prompt += `\n## MATERIAIS DISPONIVEIS (voce pode oferecer ao lead)\n`;
+        materials.forEach((m) => {
+          const hasRealUrl = m.url && !m.url.includes("example.com");
+          prompt += `- ${m.name} (${m.type}${m.category ? ", " + m.category : ""})${hasRealUrl ? " ✅ disponivel para envio" : " ❌ sem arquivo"}\n`;
+        });
+        prompt += `\nQuando o lead pedir material, use action "send_material". Para planta especificamente, use "send_planta".\n`;
+      }
+    } catch {}
+
     // Inject lead context
-    prompt += `\n\n## CONTEXTO DO LEAD ATUAL\n`;
+    prompt += `\n## CONTEXTO DO LEAD ATUAL\n`;
     prompt += `- Nome: ${lead.name || "desconhecido"}\n`;
     if (lead.profile_type && lead.profile_type !== "indefinido") prompt += `- Perfil: ${lead.profile_type}\n`;
     if (lead.objective) prompt += `- Objetivo: ${lead.objective}\n`;
     if (lead.desired_area) prompt += `- Area desejada: ${lead.desired_area}\n`;
     prompt += `- Score: ${lead.score} (${lead.score_classification})\n`;
-    prompt += `- Estado da conversa: ${lead.conversation_state}\n`;
     if (lead.visit_interest) prompt += `- Ja demonstrou interesse em visita\n`;
-    if (lead.human_handoff) prompt += `- Ja foi transferido para humano\n`;
 
     // Check if materials were already sent
     try {
@@ -507,18 +532,16 @@ const llmConversationService = {
         `lead_id=eq.${lead.id}&message_type=neq.text&limit=1&select=id`
       );
       if (sentMedia.length > 0) {
-        prompt += `\n⚠️ MATERIAIS JA FORAM ENVIADOS para este lead. NAO use action "send_material" novamente. Conduza a conversa para agendar visita ou falar com consultor humano.\n`;
+        prompt += `\n⚠️ MATERIAIS JA FORAM ENVIADOS. NAO use action "send_material" novamente. Ofereça agendar visita ou falar com consultor.\n`;
       }
     } catch {}
 
-    // M2: Anti-repetition from DB (persistent, survives restarts)
+    // M2: Anti-repetition from DB
     const recent = await guardrails.getRecentResponses(lead.id);
     if (recent.length > 0) {
       prompt += `\n## SUAS ULTIMAS RESPOSTAS (NAO REPITA)\n`;
-      recent.forEach((r, i) => {
-        prompt += `${i + 1}. "${r}"\n`;
-      });
-      prompt += `\nVarie completamente sua abordagem. Avance a conversa, nao fique repetindo saudacoes.\n`;
+      recent.forEach((r, i) => { prompt += `${i + 1}. "${r}"\n`; });
+      prompt += `Varie sua abordagem. Avance a conversa.\n`;
     }
 
     return prompt;
