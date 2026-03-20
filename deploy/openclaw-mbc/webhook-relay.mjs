@@ -1236,11 +1236,9 @@ const openclawWebhookReceiver = {
         if (llmResult.detected_objective && !lead.objective) updates.objective = llmResult.detected_objective;
         if (llmResult.detected_area && !lead.desired_area) updates.desired_area = llmResult.detected_area;
 
-        if (llmResult.action === "send_material" && !materialsAlreadySent) {
-          dispatchMaterialTypes = ["apresentacao", "pdf", "video"];
-          updates.conversation_state = "POS_CONVERSAO";
-        } else if (llmResult.action === "send_planta" && !materialsAlreadySent) {
-          dispatchMaterialTypes = ["planta"];
+        if ((llmResult.action === "send_material" || llmResult.action === "send_planta") && !materialsAlreadySent) {
+          // Send ALL available materials (planta, video, pdf, apresentacao)
+          dispatchMaterialTypes = ["apresentacao", "pdf", "video", "planta"];
           updates.conversation_state = "POS_CONVERSAO";
         } else if (llmResult.action === "schedule_visit") {
           updates.visit_interest = true;
@@ -1305,9 +1303,7 @@ const openclawWebhookReceiver = {
           await handoffRouterService.createHandoff(lead.id, reason);
           botResponse = getBotMessages().TRANSFERENCIA_HUMANA;
         } else if ((wantsMaterial || wantsPlanta) && !materialsAlreadySent) {
-          dispatchMaterialTypes = [];
-          if (wantsPlanta) dispatchMaterialTypes.push("planta");
-          if (wantsMaterial) dispatchMaterialTypes.push("apresentacao", "pdf", "video");
+          dispatchMaterialTypes = ["apresentacao", "pdf", "video", "planta"];
           updates.conversation_state = "POS_CONVERSAO";
           botResponse = "Perfeito! Estou enviando o material para você. Qualquer dúvida, estou à disposição.";
         } else if ((wantsMaterial || wantsPlanta) && materialsAlreadySent) {
