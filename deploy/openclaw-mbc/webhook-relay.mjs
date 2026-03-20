@@ -528,9 +528,11 @@ const llmConversationService = {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 15000);
     try {
+      // OpenAI requires the word "json" in messages when using response_format
+      const messages = [{ role: "system", content: systemPrompt + "\n\nIMPORTANT: Always respond in valid JSON format." }, ...history];
       const body = {
         model,
-        messages: [{ role: "system", content: systemPrompt }, ...history],
+        messages,
         temperature,
         max_tokens: 1000,
       };
