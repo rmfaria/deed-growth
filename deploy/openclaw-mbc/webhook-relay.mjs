@@ -1259,6 +1259,17 @@ const openclawWebhookReceiver = {
         } else {
           updates.conversation_state = "LLM_ACTIVE";
         }
+
+        // Persist LLM-detected score events (the regex scoring already ran, add LLM's on top)
+        if (llmResult.score_events && llmResult.score_events.length > 0) {
+          await leadScoringService.persistScoreEvents(lead.id, llmResult.score_events);
+          // Recalculate score from source of truth
+          const updatedEvents = await supabase.selectManyRaw("score_events", `lead_id=eq.${lead.id}&select=points`);
+          updates.score = updatedEvents.reduce((sum, e) => sum + (e.points || 0), 0);
+          updates.score_classification = leadScoringService.classifyScore(updates.score);
+          log("llmScoring", "persisted LLM events", { events: llmResult.score_events, newScore: updates.score });
+        }
+
         log("llmConversation", "success", { leadId: lead.id, action: llmResult.action });
       } catch (llmErr) {
         log("llmConversation", "fallback to state machine", { error: llmErr.message });
