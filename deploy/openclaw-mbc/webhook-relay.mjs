@@ -1065,25 +1065,45 @@ const openclawWebhookReceiver = {
       await supabase.update("bot_leads", { id: lead.id }, {
         attendance_status: "bot",
         conversation_state: "START",
+        score: 0,
+        score_classification: "frio",
         human_handoff: false,
         handoff_reason: null,
       });
+      const deleteUrl = `${SUPABASE_URL}/rest/v1/score_events?lead_id=eq.${lead.id}`;
+      await fetch(deleteUrl, {
+        method: "DELETE",
+        headers: { apikey: SUPABASE_SERVICE_ROLE_KEY, Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}` },
+      }).catch(() => {});
       lead.attendance_status = "bot";
       lead.conversation_state = "START";
+      lead.score = 0;
+      lead.score_classification = "frio";
       lead.human_handoff = false;
     }
 
     // ── Auto-reactivate leads stuck in aguardando_humano ──
     if (lead.attendance_status === "aguardando_humano") {
       log("webhookReceiver", "reactivating lead from handoff", { leadId: lead.id, phone });
+      // Reset score to prevent immediate re-handoff (score >= 51 → handoff loop)
       await supabase.update("bot_leads", { id: lead.id }, {
         attendance_status: "bot",
         conversation_state: "START",
+        score: 0,
+        score_classification: "frio",
         human_handoff: false,
         handoff_reason: null,
       });
+      // Clear old score events to start fresh
+      const deleteUrl = `${SUPABASE_URL}/rest/v1/score_events?lead_id=eq.${lead.id}`;
+      await fetch(deleteUrl, {
+        method: "DELETE",
+        headers: { apikey: SUPABASE_SERVICE_ROLE_KEY, Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}` },
+      }).catch(() => {});
       lead.attendance_status = "bot";
       lead.conversation_state = "START";
+      lead.score = 0;
+      lead.score_classification = "frio";
       lead.human_handoff = false;
     }
 
